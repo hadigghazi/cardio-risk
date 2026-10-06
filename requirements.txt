@@ -1,0 +1,9 @@
+# the versions the report was developed and checked with
+numpy==2.2.4
+pandas==2.2.3
+scikit-learn==1.6.1
+matplotlib==3.10.0
+nbformat==5.10.4
+nbconvert==7.16.6
+ipykernel==6.29.5
+pytest==8.3.5

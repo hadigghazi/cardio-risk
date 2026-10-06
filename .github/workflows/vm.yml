@@ -1,0 +1,176 @@
+name: VM
+
+# Runs the project's jobs on dblp-vm, started and watched from here. Manual only (workflow_dispatch).
+#
+#   run      copy this commit to the VM, build the image there and start `job` in a detached,
+#            memory- and CPU-capped container named cardio-<this run's id>; follow it for up to
+#            `wait` minutes and upload its outputs. A job that outlives the wait keeps running.
+#   collect  upload the outputs of an earlier run (`run_id`), e.g. one that outlived its wait
+#   log      the last `lines` lines of an earlier run's container log
+#   stop     stop an earlier run's container
+#   status   this project's containers, the VM's memory and disk
+#
+# The VM has no swap and also serves the dblp and AutoML sites: a container over its memory cap is
+# killed alone instead of starving them. Outputs live in ~/cardio-risk/runs/<run id>/outputs.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "run | collect | log | stop | status"
+        required: true
+        default: run
+        type: choice
+        options: [run, collect, log, stop, status]
+      job:
+        description: "run: what to run"
+        required: false
+        default: report
+        type: choice
+        options: [report, clean, test]
+      run_id:
+        description: "collect / log / stop: the id of the run that started the job"
+        required: false
+        default: ""
+      memory:
+        description: "run: memory cap, e.g. 3g or 1500m"
+        required: false
+        default: "4g"
+      cpus:
+        description: "run: CPU cap"
+        required: false
+        default: "4"
+      wait:
+        description: "run: minutes to follow the job before leaving it running (max 50)"
+        required: false
+        default: "45"
+      lines:
+        description: "log: lines from the end"
+        required: false
+        default: "200"
+
+concurrency: vm-${{ github.event.inputs.action }}-${{ github.event.inputs.run_id || github.run_id }}
+
+jobs:
+  vm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      ACTION: ${{ github.event.inputs.action }}
+      JOB: ${{ github.event.inputs.job }}
+      MEMORY: ${{ github.event.inputs.memory }}
+      CPUS: ${{ github.event.inputs.cpus }}
+      WAIT: ${{ github.event.inputs.wait }}
+      LINES: ${{ github.event.inputs.lines }}
+      TARGET_RUN: ${{ github.event.inputs.action == 'run' && github.run_id || github.event.inputs.run_id }}
+    steps:
+      - name: Check the inputs
+        run: |
+          set -eu
+          if [ "$ACTION" != status ]; then
+            [[ "$TARGET_RUN" =~ ^[0-9]{1,20}$ ]] || { echo "run_id must be the numeric id of a run: '$TARGET_RUN'"; exit 1; }
+          fi
+          [[ "$MEMORY" =~ ^[0-9]{1,5}[mg]$ ]] || { echo "bad memory: '$MEMORY'"; exit 1; }
+          [[ "$CPUS" =~ ^[0-9]{1,2}(\.[0-9])?$ ]] || { echo "bad cpus: '$CPUS'"; exit 1; }
+          [[ "$WAIT" =~ ^[0-9]{1,2}$ ]] && [ "$WAIT" -le 50 ] || { echo "wait must be 0-50 minutes"; exit 1; }
+          [[ "$LINES" =~ ^[0-9]{1,5}$ ]] || { echo "bad lines"; exit 1; }
+          # the job is a choice, mapped to a fixed command here: nothing typed reaches a shell on the VM
+          case "$JOB" in
+            report) cmd="python cardio.py clean && python build_report.py" ;;
+            clean)  cmd="python cardio.py clean" ;;
+            test)   cmd="python -m pytest -q -p no:cacheprovider" ;;
+            *) echo "unknown job"; exit 1 ;;
+          esac
+          echo "CMD=$cmd" >> "$GITHUB_ENV"
+          echo "NAME=cardio-$TARGET_RUN" >> "$GITHUB_ENV"
+          echo "DIR=cardio-risk/runs/$TARGET_RUN" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        if: env.ACTION == 'run'
+
+      - name: Prepare SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.VM_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "VM=${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" >> "$GITHUB_ENV"
+          echo "SSH=ssh -i $HOME/.ssh/deploy_key -o ServerAliveInterval=30" >> "$GITHUB_ENV"
+
+      - name: Start
+        if: env.ACTION == 'run'
+        run: |
+          set -eu
+          git archive --format=tar HEAD | $SSH "$VM" "mkdir -p $DIR/src $DIR/outputs && tar -x -C $DIR/src"
+          # ssh joins its arguments into one command line for the remote shell: quote each one for it
+          args=$(printf '%q ' "$NAME" "$DIR" "$MEMORY" "$CPUS" "$GITHUB_SHA" "$CMD")
+          $SSH "$VM" "bash -s -- $args" <<'EOF'
+            set -eu
+            name="$1"; dir="$2"; memory="$3"; cpus="$4"; sha="$5"; cmd="$6"
+            echo "== memory before starting"; free -h | head -2
+            # keep the ten most recent finished containers (for log/collect) and drop older images
+            docker ps -a --filter label=project=cardio-risk --filter status=exited -q | tail -n +11 | xargs -r docker rm > /dev/null
+            docker build -q -t "cardio-risk:${sha:0:12}" "$dir/src"
+            docker images cardio-risk --format '{{.Repository}}:{{.Tag}}' | grep -v ":${sha:0:12}$" \
+              | xargs -r docker rmi > /dev/null 2>&1 || true
+            ln -sfn "runs/${dir##*/}" ~/cardio-risk/latest
+            docker run -d --name "$name" --memory "$memory" --memory-swap "$memory" --cpus "$cpus" \
+              --user "$(id -u):$(id -g)" -v "$HOME/$dir/outputs:/work/outputs" \
+              --label project=cardio-risk "cardio-risk:${sha:0:12}" sh -c "$cmd"
+            echo "== started $name: $cmd (memory $memory, cpus $cpus)"
+          EOF
+
+      - name: Follow
+        if: env.ACTION == 'run'
+        run: |
+          set -u
+          # follow the log until the container exits or the wait runs out; the job keeps running either way
+          if [ "$WAIT" -gt 0 ]; then timeout "$((WAIT * 60))" $SSH "$VM" "docker logs -f $NAME" || true; fi
+          state=$($SSH "$VM" "docker inspect -f '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}' $NAME")
+          echo "== container: $state (status, exit code, killed for memory)"
+          echo "STATE=$state" >> "$GITHUB_ENV"
+
+      - name: Collect the outputs
+        if: env.ACTION == 'run' || env.ACTION == 'collect'
+        run: |
+          set -eu
+          mkdir -p outputs
+          $SSH "$VM" "docker logs $NAME > $DIR/outputs/container.log 2>&1 || true; tar -czf - -C $DIR outputs" \
+            | tar -xzf - -C .
+          find outputs -type f | sort | head -50; du -sh outputs
+
+      - uses: actions/upload-artifact@v4
+        if: env.ACTION == 'run' || env.ACTION == 'collect'
+        with:
+          name: outputs-${{ env.TARGET_RUN }}
+          path: outputs
+          retention-days: 30
+
+      - name: Fail if the job failed
+        if: env.ACTION == 'run'
+        run: |
+          case "$STATE" in
+            "exited 0 "*) echo "job finished" ;;
+            running*) echo "still running on the VM: collect it later with run_id=$TARGET_RUN" ;;
+            *) echo "job failed: $STATE"; exit 1 ;;
+          esac
+
+      - name: Log
+        if: env.ACTION == 'log'
+        run: $SSH "$VM" "docker logs --tail $LINES $NAME"
+
+      - name: Stop
+        if: env.ACTION == 'stop'
+        run: $SSH "$VM" "docker stop $NAME && docker inspect -f '{{.State.Status}}' $NAME"
+
+      - name: Status
+        if: env.ACTION == 'status'
+        run: |
+          $SSH "$VM" bash -s <<'EOF'
+            echo "== cardio-risk containers"
+            docker ps -a --filter label=project=cardio-risk --format '{{.Names}}\t{{.Status}}\t{{.Image}}'
+            echo; echo "== runs"; ls -1t ~/cardio-risk/runs 2>/dev/null | head -10
+            echo; echo "== memory"; free -h
+            echo; echo "== disk"; df -h / | tail -1
+          EOF

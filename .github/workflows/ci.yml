@@ -1,0 +1,28 @@
+name: CI
+
+# Every push: build the image, run the tests, and build the report on GitHub's runner, so a broken
+# notebook is caught before anything runs on the VM. The executed report is kept as an artifact.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t cardio-risk .
+      - name: Tests
+        run: docker run --rm cardio-risk python -m pytest -q -p no:cacheprovider
+      - name: Build the report
+        run: |
+          mkdir -p outputs && chmod 777 outputs
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/outputs:/work/outputs" cardio-risk \
+            sh -c "python cardio.py clean && python build_report.py"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report-ci
+          path: outputs
+          retention-days: 14
