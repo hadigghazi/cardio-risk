@@ -1,6 +1,8 @@
 name: VM
 
-# Runs the project's jobs on dblp-vm, started and watched from here. Manual only (workflow_dispatch).
+# Runs the project's jobs on dblp-vm, the way the dblp project reaches it: SSH with the VM_HOST,
+# VM_USER and VM_SSH_KEY secrets. Started by hand (workflow_dispatch) or by CI after the tests pass
+# on a push to main (workflow_call, job=report).
 #
 #   run      copy this commit to the VM, build the image there and start `job` in a detached,
 #            memory- and CPU-capped container named cardio-<this run's id>; follow it for up to
@@ -48,22 +50,31 @@ on:
         required: false
         default: "200"
 
-concurrency: vm-${{ github.event.inputs.action }}-${{ github.event.inputs.run_id || github.run_id }}
+  workflow_call:
+    inputs:
+      action: {type: string, default: run}
+      job: {type: string, default: report}
+      run_id: {type: string, default: ""}
+      memory: {type: string, default: "4g"}
+      cpus: {type: string, default: "4"}
+      wait: {type: string, default: "45"}
+      lines: {type: string, default: "200"}
 
 jobs:
   vm:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    concurrency: vm-${{ inputs.action }}-${{ inputs.run_id || github.run_id }}
     permissions:
       contents: read
     env:
-      ACTION: ${{ github.event.inputs.action }}
-      JOB: ${{ github.event.inputs.job }}
-      MEMORY: ${{ github.event.inputs.memory }}
-      CPUS: ${{ github.event.inputs.cpus }}
-      WAIT: ${{ github.event.inputs.wait }}
-      LINES: ${{ github.event.inputs.lines }}
-      TARGET_RUN: ${{ github.event.inputs.action == 'run' && github.run_id || github.event.inputs.run_id }}
+      ACTION: ${{ inputs.action }}
+      JOB: ${{ inputs.job }}
+      MEMORY: ${{ inputs.memory }}
+      CPUS: ${{ inputs.cpus }}
+      WAIT: ${{ inputs.wait }}
+      LINES: ${{ inputs.lines }}
+      TARGET_RUN: ${{ inputs.action == 'run' && github.run_id || inputs.run_id }}
     steps:
       - name: Check the inputs
         run: |

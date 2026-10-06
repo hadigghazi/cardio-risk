@@ -8,8 +8,8 @@ The brief is in `brief/`. Deliverables: the report notebook, the Python file and
 | `cardio.py` | all project code: loading, cleaning, features, (later) models and evaluation; also a CLI |
 | `report.md` | source of the report; `build_report.py` turns it into `outputs/report.ipynb` and executes it |
 | `tests/` | unit tests for the cleaning rules and features |
-| `.github/workflows/ci.yml` | every push: tests + report built on GitHub's runner (artifact `report-ci`) |
-| `.github/workflows/vm.yml` | manual: run a job on dblp-vm in a capped container, collect its outputs |
+| `.github/workflows/ci.yml` | every push: tests on GitHub's runner; on main, then the report is built and run on dblp-vm (artifact `outputs-<run id>`) |
+| `.github/workflows/vm.yml` | runs jobs on dblp-vm over SSH (secrets VM_HOST, VM_USER, VM_SSH_KEY, as in the dblp project), in a capped container; by hand or called by CI |
 
 ## Report plan
 

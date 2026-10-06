@@ -1,28 +1,38 @@
 name: CI
 
-# Every push: build the image, run the tests, and build the report on GitHub's runner, so a broken
-# notebook is caught before anything runs on the VM. The executed report is kept as an artifact.
+# Like the dblp project: tests on GitHub's runner, the real work on dblp-vm. Every push runs the
+# tests; a push to main then builds and runs the report on the VM (vm.yml, job=report) and uploads
+# the executed notebook, figures and tables as the run's artifact. The VM step skips cleanly until
+# the VM_HOST secret exists.
 on:
   push:
   pull_request:
 
 jobs:
-  test-and-report:
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+    outputs:
+      has_host: ${{ steps.vm.outputs.has_host }}
     steps:
       - uses: actions/checkout@v4
       - name: Build the image
         run: docker build -t cardio-risk .
       - name: Tests
         run: docker run --rm cardio-risk python -m pytest -q -p no:cacheprovider
-      - name: Build the report
+      - name: Is the VM configured?
+        id: vm
+        env:
+          HAS_HOST: ${{ secrets.VM_HOST != '' }}
         run: |
-          mkdir -p outputs && chmod 777 outputs
-          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/outputs:/work/outputs" cardio-risk \
-            sh -c "python cardio.py clean && python build_report.py"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: report-ci
-          path: outputs
-          retention-days: 14
+          echo "has_host=$HAS_HOST" >> "$GITHUB_OUTPUT"
+          [ "$HAS_HOST" = true ] || echo "VM_HOST secret is not set - the report will not run on the VM."
+
+  report-on-vm:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.test.outputs.has_host == 'true'
+    uses: ./.github/workflows/vm.yml
+    with:
+      action: run
+      job: report
+    secrets: inherit
