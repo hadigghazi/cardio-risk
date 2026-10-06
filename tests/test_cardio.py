@@ -114,3 +114,18 @@ def test_split_is_stratified_and_reproducible():
     assert len(test) == 20 and not train & test
     assert sum(i % 2 for i in test) == 10
     assert cardio.split_ids(df) == (train, test)
+
+
+def test_train_test_uses_the_same_patients_for_every_strategy(tmp_path):
+    records = [record(i, weight=50 + i % 40, age=15000 + i, cardio_=i % 2) for i in range(200)]
+    records[3]["ap_lo"] = 1000      # repairable
+    records[8]["height"] = 60       # implausible, no repair
+    path = tmp_path / "cardio.csv"
+    frame(*records).to_csv(path, index=False)
+    train_d, test_d = cardio.train_test("drop", path)
+    train_r, test_r = cardio.train_test("repair", path)
+    assert not set(train_d["id"]) & set(test_d["id"])
+    assert set(test_d["id"]) <= set(test_r["id"]) and set(train_d["id"]) <= set(train_r["id"])
+    assert 3 in set(train_r["id"]) | set(test_r["id"]) and 3 not in set(train_d["id"]) | set(test_d["id"])
+    assert 8 not in set(train_r["id"]) | set(test_r["id"])
+    assert set(cardio.FEATURES) <= set(train_d.columns)

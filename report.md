@@ -1,37 +1,43 @@
-# Predicting Cardiovascular Disease from a Routine Medical Examination
+# Patient's Sickness Prediction: Detecting Cardiovascular Disease from a Routine Medical Examination
 
 **Hadi Ghazi**, Lebanese University
 
-*Topic 2 of the project list: Patient's Sickness Prediction (`cardio.csv`).*
+*Project topic 2: Patient's Sickness Prediction, using the `cardio` dataset.*
 
 ## 1. Introduction
 
 Cardiovascular diseases (CVDs) kill an estimated 17.9 million people every year, more than any other
-cause. Many of these deaths could be delayed by finding people at risk early, before the first heart
-attack or stroke. That makes screening a natural task for machine learning. A model takes the few
-numbers recorded at a routine check-up (age, sex, height, weight, blood pressure, cholesterol,
-glucose and three lifestyle questions) and estimates whether the patient has a cardiovascular disease.
+cause. Many of these deaths could be delayed if patients at risk were identified early. Doctors find
+this hard to do reliably by hand: no single measurement settles the question, and the risk builds up
+from many small factors.
 
-The dataset has 70,000 patients, which is large for a medical tabular dataset. Anyone who looks
-closely meets two facts at once. First, the raw file contains impossible measurements, such as blood
-pressures of −150 or 16,020 mmHg. Second, the predictive signal is modest: models reported for this dataset
-typically reach about 73% accuracy. A clinician needs no model to see that high blood pressure is the main
-risk. So the useful question is not "which algorithm scores highest" but what a model adds, and when
-its numbers can be trusted.
+**Objective.** Build a model that uses the values collected at a routine medical examination (age,
+sex, height, weight, blood pressure, cholesterol, glucose, and three lifestyle questions) to tell
+whether a patient has a cardiovascular disease. Then evaluate how well it does this. The final model
+is delivered with a function that gives a verdict and a risk for a new patient (Section 10).
 
-### Research questions
+The dataset has 70,000 patients, which is large for medical tabular data, but it is not clean. Some
+recorded blood pressures are impossible, such as −150 or 16,020 mmHg. The signal is also modest:
+careful studies of this dataset report about 73% accuracy. Other published papers claim 86–94% on the
+same data, which is hard to reconcile with that. Three questions therefore guide the evaluation, so
+that the final model comes with an honest account of what it can do:
 
-These questions, and the evaluation protocol in Section 2, were fixed before any model was trained:
+- **Q1. How much does machine learning improve on what a doctor already has?** The models are
+  compared with two clinical baselines. The first is a blood-pressure threshold from the ACC/AHA 2017
+  guideline: systolic pressure of at least 130 mmHg, stage 1 hypertension. The second is the
+  Framingham office-based risk score, which uses age, sex, BMI, blood pressure, smoking and diabetes.
+- **Q2. How much do data-handling choices change the measured performance?** This covers the
+  cleaning strategy, and the common mistakes that let information from the test set leak into
+  training. Reproducing those mistakes shows how accuracies far above 73% can be produced.
+- **Q3. Can the final model's predictions be trusted and explained?** This covers which factors drive
+  the predictions, whether a simple points score can match the best model, whether predicted risks
+  match observed frequencies, and whether errors are evenly spread across sexes and age groups.
 
-- **RQ1. What does machine learning add over a clinical rule?** We compare increasingly flexible
-  models against a single threshold doctors already use: systolic pressure of at least 130 mmHg,
-  which is stage 1 hypertension in the ACC/AHA 2017 guideline.
-- **RQ2. How much do data-cleaning choices matter?** We train on the data as recorded, with
-  implausible records removed, and with recognisable entry errors repaired. All three are scored on
-  the same test patients.
-- **RQ3. Can the predictions be trusted for individual patients?** We ask which factors drive them,
-  whether predicted risks match observed frequencies (calibration), and whether errors are evenly
-  spread across sexes and age groups.
+**Structure.** Section 2 fixes the evaluation protocol before any model is trained. Section 3
+describes the data, Section 4 cleans it, Section 5 explores it, and Section 6 derives features.
+Section 7 trains and compares the models (Q1), Section 8 evaluates the chosen model on the test set
+and explains it, and Section 9 runs the reliability checks (Q2, Q3). Section 10 shows the model in
+use, and Section 11 concludes, with the study's limitations.
 
 ```python
 import sys
@@ -67,21 +73,32 @@ plt.rcParams.update({
 
 The protocol is fixed before modelling, so that no result can steer the choices behind it.
 
-1. **Exact duplicates are removed first** (24 records that repeat another record in every column but
-   `id`). If a pair were split between training and test data, the model would be tested on a
-   patient it had already seen.
-2. **One stratified train/test split**: 80% train, 20% test, seed 42. It is drawn once from the
-   deduplicated raw data. Every cleaning strategy uses the same patient ids, so all models are
-   judged on the same patients (RQ2).
-3. Cleaning applies fixed per-record rules and learns nothing from the data. So it cannot leak test
-   information into training, whether it runs before or after the split. Anything that *is* learned
-   (scaling, imputation, model parameters) is fitted inside cross-validation folds on training data.
-4. **Model selection uses 5-fold stratified cross-validation on the training set only.** The test
-   set is scored once per final model.
-5. **Metrics:** ROC AUC (ranking quality, independent of a threshold) is the primary metric.
-   Accuracy, sensitivity and specificity are reported at stated thresholds, and the Brier score and
-   calibration curves cover RQ3. Each test metric gets a 95% bootstrap confidence interval, because
-   differences of a few tenths of a point are within noise at this test-set size.
+1. **Exact duplicates are removed first.** There are 24 records that repeat another record in every
+   column except `id`. If a pair were split between training and test data, the model would be
+   tested on a patient it had already seen.
+2. **One stratified train/test split.** 80% of patients go to training and 20% to test (seed 42).
+   The split is drawn once, by patient id, from the deduplicated raw data. Every later comparison
+   uses the same ids. Exploratory analysis (Section 5) and every modelling decision use the training
+   patients only.
+3. **Cleaning learns nothing from the data.** It applies fixed per-record rules, so it cannot leak
+   test information into training. Anything that *is* learned (scaling, model parameters, thresholds)
+   is fitted on training data only, inside cross-validation folds during model selection.
+4. **Model selection.** Models are tuned and compared with 5-fold stratified cross-validation on the
+   training set. The test set is scored once, for the final comparison, and never used to choose
+   anything.
+5. **Common test set.** When cleaning strategies are compared, all of them are scored on the same
+   test patients: those whose records pass every plausibility check. A deployed system would reject
+   an impossible input at entry rather than predict from it. How each strategy handles the remaining
+   records is reported separately.
+6. **Metrics.** The primary metric is ROC AUC: how well the model ranks diseased patients above
+   healthy ones, independent of any threshold. Accuracy, sensitivity (the share of diseased patients
+   detected) and specificity (the share of healthy patients cleared) are reported at the 0.5
+   threshold and at a screening threshold chosen on training data. The Brier score and calibration
+   curves measure how far predicted risks can be trusted. Every test metric gets a 95% bootstrap
+   confidence interval, because with about 14,000 test patients a difference of one point in
+   accuracy can be noise.
+7. **The leakage experiments (Q2) are kept separate.** They reproduce mistakes on purpose. They are
+   labelled as such and never feed into the choice of the final model.
 
 ## 3. The data
 
@@ -251,9 +268,174 @@ has almost no linear relationship with the diagnosis (r = 0.05). After either ki
 the strongest single predictor (r = 0.43). Fewer than 2% of records cause this. A handful of values
 in the thousands dominate the variance and hide everything else. Anything linear, such as a
 correlation or a logistic regression on unscaled values, reads the raw data wrongly. Tree models
-split on ranks and should suffer far less. The modelling section tests whether that holds.
+split on ranks and should suffer far less. Section 9 tests whether that holds.
 
-### 4.4 Derived features
+## 5. Exploratory data analysis
+
+From here on, the analysis uses the **training patients only**, cleaned with the `drop` strategy (the
+choice of strategy is revisited in Section 9). The test patients stay unseen until Section 8.
+
+```python
+train, test = cardio.train_test("drop")
+print(f"training patients: {len(train):,}   test patients: {len(test):,}")
+print(f"share with CVD in training: {train['cardio'].mean():.1%}")
+print(f"age {train['age_years'].min():.0f}-{train['age_years'].max():.0f} years, "
+      f"median {train['age_years'].median():.0f}; {train['male'].mean():.0%} men")
+```
+
+### 5.1 Disease rate by risk factor
+
+The most direct way to see what the data holds is the share of patients with CVD at each level of
+each factor. The dashed line marks the overall rate.
+
+```python
+def band(series, edges, labels):
+    return pd.cut(series, edges, labels=labels, right=False)
+
+LEVELS = ["normal", "above", "well above"]
+panels = [
+    ("Age (years)", band(train["age_years"], [0, 40, 45, 50, 55, 60, 70],
+                        ["<40", "40-44", "45-49", "50-54", "55-59", "60+"])),
+    ("Systolic pressure (mmHg)", band(train["ap_hi"], [0, 120, 130, 140, 160, 400],
+                                      ["<120", "120-129", "130-139", "140-159", "160+"])),
+    ("BMI (kg/m²)", band(train["bmi"], [0, 18.5, 25, 30, 35, 100],
+                         ["<18.5", "18.5-25", "25-30", "30-35", "35+"])),
+    ("Cholesterol", pd.Categorical(train["cholesterol"].map(dict(enumerate(LEVELS, 1))), LEVELS)),
+    ("Glucose", pd.Categorical(train["gluc"].map(dict(enumerate(LEVELS, 1))), LEVELS)),
+]
+lifestyle = [(f"{name}\n{answer}", train.loc[train[col] == value, "cardio"])
+             for col, name in [("smoke", "smokes"), ("alco", "alcohol"), ("active", "active")]
+             for value, answer in [(0, "no"), (1, "yes")]]
+overall = train["cardio"].mean()
+
+fig, axes = plt.subplots(2, 3, figsize=(12, 6.6), sharey=True)
+for ax, panel in zip(axes.flat, panels + [("Lifestyle (self-reported)", None)]):
+    title, groups = panel
+    if groups is None:
+        labels = [name for name, _ in lifestyle]
+        rates = [s.mean() for _, s in lifestyle]
+    else:
+        g = train.groupby(pd.Series(groups, index=train.index), observed=False)["cardio"].mean()
+        labels, rates = list(g.index), list(g)
+    x = np.arange(len(labels))
+    ax.bar(x, rates, width=0.66, color=CVD)
+    for xi, r in zip(x, rates):
+        ax.text(xi, r + 0.02, f"{r:.0%}", ha="center", fontsize=8.5, color=INK)
+    ax.axhline(overall, color=MUTED, lw=0.9, ls="--")
+    ax.set_xticks(x, labels, fontsize=8)
+    ax.set(title=title, ylim=(0, 0.9))
+    ax.grid(axis="x", visible=False)
+    ax.yaxis.set_major_formatter(plt.matplotlib.ticker.PercentFormatter(1))
+for ax in axes[:, 0]:
+    ax.set_ylabel("share with CVD")
+fig.suptitle("Blood pressure, age, weight and cholesterol carry the signal; the lifestyle answers barely do",
+             x=0.01, ha="left", fontsize=12, fontweight="bold")
+fig.tight_layout()
+fig.savefig(FIGURES / "fig2_disease_rate_by_factor.png")
+plt.show()
+```
+
+Four factors carry most of the signal, and each rises steadily with no reversal:
+
+- **Systolic blood pressure** is the strongest. The disease rate climbs from about a quarter of
+  patients below 120 mmHg to most patients at 160 mmHg and above.
+- **Age.** The rate roughly triples between patients under 40 and those over 60.
+- **Weight.** The rate rises across the BMI categories, from about a quarter of underweight patients
+  to about two thirds of those with a BMI of 35 or more.
+- **Cholesterol** is the strongest of the lab results. Three quarters of patients with "well above
+  normal" cholesterol have CVD. Glucose follows the same pattern, but more weakly.
+
+The three lifestyle answers barely move the rate, and two point the "wrong" way: smokers and drinkers
+have slightly *lower* disease rates than other patients. Only physical activity has the expected
+protective sign.
+
+### 5.2 The smoking paradox
+
+Smoking is an established cause of cardiovascular disease, so a lower rate among smokers needs an
+explanation. The first suspect is a confounder. Smoking in this data is almost entirely male, so the
+comparison is redone within each sex and age group:
+
+```python
+print("share who smoke:", train.groupby("male")["smoke"].mean().rename({0: "women", 1: "men"})
+      .map("{:.1%}".format).to_dict())
+
+men = train[train["male"] == 1]
+men_band = band(men["age_years"], [0, 45, 50, 55, 60, 70], ["<45", "45-49", "50-54", "55-59", "60+"])
+by_age = men.groupby([men_band, "smoke"], observed=True)["cardio"].mean().unstack()
+by_age.columns = ["non-smokers", "smokers"]
+
+fig, ax = plt.subplots(figsize=(6.4, 3.4))
+x = np.arange(len(by_age))
+ax.vlines(x, by_age.min(axis=1), by_age.max(axis=1), color="#cfcec8", lw=2, zorder=1)
+for col, colour in [("non-smokers", NO_CVD), ("smokers", CVD)]:
+    ax.plot(x, by_age[col], "o", color=colour, ms=8, label=col, zorder=2)
+ax.set_xticks(x, by_age.index)
+ax.set(xlabel="age (years)", ylabel="share with CVD", title="Men: smokers have less CVD in every age group")
+ax.yaxis.set_major_formatter(plt.matplotlib.ticker.PercentFormatter(1, decimals=0))
+ax.legend(loc="upper left")
+fig.savefig(FIGURES / "fig3_smoking_paradox.png")
+plt.show()
+by_age.style.format("{:.1%}")
+```
+
+The paradox survives both checks. Among men (women hardly smoke here), smokers have a lower disease
+rate than non-smokers of the same age. The likeliest explanation lies in how the data was collected,
+not in biology. The diagnosis and the answers were recorded **at the same examination**, so a patient
+who already has heart disease has usually been told to quit. Such a patient answers "no" to smoking,
+which moves diseased former smokers into the non-smoker group. This effect has a name in
+epidemiology: the "sick quitter".
+
+This has two consequences for the rest of the study:
+
+1. The task is **detection of an existing disease**, not prediction of a future one. A model trained
+   here can say "this profile looks like the profiles of patients who have CVD". It cannot say "this
+   person will develop CVD".
+2. Feature effects learned from this data are **associations, not causes**. A model that gives
+   smoking a negative weight is describing the data correctly, but no one should be told that smoking
+   protects the heart. Section 8 returns to this when the model is explained.
+
+### 5.3 Correlations between features
+
+```python
+cols = cardio.BASE_FEATURES + ["bmi", "cardio"]
+corr = train[cols].corr()
+
+fig, ax = plt.subplots(figsize=(7.4, 6.2))
+im = ax.imshow(corr, cmap="RdBu_r", vmin=-1, vmax=1)
+ax.set_xticks(range(len(cols)), cols, rotation=45, ha="right")
+ax.set_yticks(range(len(cols)), cols)
+for i in range(len(cols)):
+    for j in range(len(cols)):
+        v = corr.iloc[i, j]
+        if i != j and abs(v) >= 0.1:
+            ax.text(j, i, f"{v:.2f}", ha="center", va="center", fontsize=7,
+                    color="white" if abs(v) > 0.6 else INK)
+ax.grid(False)
+ax.set_title("Pearson correlation (training patients)")
+fig.colorbar(im, ax=ax, shrink=0.8)
+fig.savefig(FIGURES / "fig4_correlations.png")
+plt.show()
+corr["cardio"].drop("cardio").sort_values(ascending=False).rename("correlation with CVD").to_frame()
+```
+
+The last column restates Section 5.1 as single numbers. Systolic pressure, diastolic pressure, age,
+cholesterol and BMI lead, while sex and the lifestyle answers are close to zero. Among the features
+themselves, the two blood pressures are strongly correlated (about 0.7), and so are weight and BMI,
+and sex and height. For tree models this hardly matters. For logistic regression it means individual
+coefficients must be read with care, since correlated features share their effect.
+
+### 5.4 What the exploration implies for modelling
+
+- The strongest relationships are **monotonic**: the risk rises steadily with blood pressure, age,
+  BMI and cholesterol. A linear model on suitable features should capture most of the signal, so
+  flexible models have limited room to improve on it. This is the expectation Q1 will test.
+- **No class imbalance**: 49.5% of training patients have CVD. Oversampling methods such as SMOTE
+  have nothing to fix here. In Section 9 they appear only as one of the mistakes the leakage
+  experiments reproduce.
+- The lifestyle answers are weak and partly distorted by reverse causation. They are kept, because a
+  model should use what the examination records, but nothing causal is read into them.
+
+## 6. Feature engineering
 
 Four clinically standard quantities are added to the eleven recorded ones:
 
@@ -265,11 +447,10 @@ Four clinically standard quantities are added to the eleven recorded ones:
 | `bp_stage` | ACC/AHA 2017: 0 normal, 1 elevated, 2 stage 1, 3 stage 2 | the categories clinicians act on |
 
 ```python
-data = cardio.dataset("drop")
-rate = data.groupby("bp_stage")["cardio"].agg(["mean", "size"])
+rate = train.groupby("bp_stage")["cardio"].agg(["mean", "size"])
 
 fig, ax = plt.subplots(figsize=(6.4, 3.4))
-bars = ax.bar(range(4), rate["mean"], width=0.62, color=CVD)
+ax.bar(range(4), rate["mean"], width=0.62, color=CVD)
 for i, (m, n) in enumerate(zip(rate["mean"], rate["size"])):
     ax.text(i, m + 0.015, f"{m:.0%}", ha="center", color=INK, fontsize=9.5, fontweight="bold")
     ax.text(i, 0.02, f"n = {n:,}", ha="center", color="white", fontsize=8)
@@ -278,7 +459,7 @@ ax.set(ylim=(0, 1), ylabel="share with cardiovascular disease", xlabel="ACC/AHA 
        title="Disease rate climbs with every blood-pressure category")
 ax.yaxis.set_major_formatter(plt.matplotlib.ticker.PercentFormatter(1))
 ax.grid(axis="x", visible=False)
-fig.savefig(FIGURES / "fig2_disease_by_bp_stage.png")
+fig.savefig(FIGURES / "fig5_disease_by_bp_stage.png")
 plt.show()
 ```
 
@@ -286,6 +467,16 @@ The large stage 1 group follows from the guideline, not from an error. The most 
 the data, 120/80, is stage 1 because a diastolic pressure of 80 mmHg starts stage 1 in the 2017
 guideline.
 
-After cleaning, the data tells the clinically expected story. The disease rate rises steadily from
-normal blood pressure to stage 2 hypertension, where most patients are diagnosed with CVD. That
-check is the main reason to trust the cleaned data more than the raw file.
+The derived category summarises both pressures in the terms clinicians act on, and the disease rate
+rises steadily across it: from about one patient in five at normal pressure to most patients at
+stage 2.
+
+Two points about these features:
+
+- **They are fixed formulas, not learned transformations.** Like the cleaning rules, they cannot
+  leak test information.
+- **They overlap with the recorded values on purpose.** BMI is a function of height and weight, and
+  the three pressure features are functions of the two readings. Tree models gain from having the
+  combination precomputed, since a split on BMI replaces many splits on height and weight. For
+  logistic regression the overlap is handled by regularisation. Section 7 checks whether the derived
+  features help at all, by training the same models with and without them.

@@ -11,6 +11,27 @@ The brief is in `brief/`. Deliverables: the report notebook, the Python file and
 | `.github/workflows/ci.yml` | every push: tests + report built on GitHub's runner (artifact `report-ci`) |
 | `.github/workflows/vm.yml` | manual: run a job on dblp-vm in a capped container, collect its outputs |
 
+## Report plan
+
+The report follows the brief: build a model that detects whether a patient has cardiovascular
+disease, then evaluate it honestly. Three questions guide the evaluation: **Q1**, what ML adds over
+clinical baselines (the systolic ≥ 130 rule and the Framingham office-based score); **Q2**, how much
+data handling (cleaning, leakage) changes the measured performance; **Q3**, whether the predictions
+can be trusted and explained.
+
+| § | Section | Status |
+|---|---|---|
+| 1-2 | Introduction, evaluation protocol | done |
+| 3-4 | Data, data quality and cleaning | done |
+| 5 | Exploratory analysis (training patients only) | done |
+| 6 | Feature engineering | done |
+| 7 | Models: baselines, LR, RF, gradient boosting, MLP; 5-fold CV (Q1) | next, on the VM |
+| 8 | Final model on the test set; explanation; points score | |
+| 9 | Reliability: cleaning strategies, reproduced leakage, calibration, subgroups (Q2, Q3) | |
+| 10 | Using the model on a new patient | |
+| 11 | Conclusion and limitations | |
+| - | Presentation | after the report |
+
 ## Running
 
 On the VM (Actions → VM → Run workflow): `action=run`, `job=report`. The executed notebook,

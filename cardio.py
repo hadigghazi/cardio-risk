@@ -229,6 +229,14 @@ def split_ids(df: pd.DataFrame, test_size: float = TEST_SIZE, seed: int = SEED) 
     return set(train), set(test)
 
 
+def train_test(strategy: str = "drop", path: Path | str = DATA) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The modelling table for one cleaning strategy, divided by the fixed train/test patient ids."""
+    train_ids, test_ids = split_ids(load(path))
+    data = dataset(strategy, path)
+    return (data[data["id"].isin(train_ids)].reset_index(drop=True),
+            data[data["id"].isin(test_ids)].reset_index(drop=True))
+
+
 # --------------------------------------------------------------------------------------------- CLI
 
 def _cmd_clean(args: argparse.Namespace) -> None:
