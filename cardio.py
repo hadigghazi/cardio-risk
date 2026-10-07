@@ -7,6 +7,7 @@ This module holds everything the report (report.ipynb) relies on, so the noteboo
 this file always use the same code:
 
     python cardio.py clean      data-quality audit and the three cleaning strategies, side by side
+    python cardio.py compare    cross-validated comparison of the clinical baselines and the models
 
 Cleaning works one row at a time with fixed rules (no statistic is learned from the data), so it can
 be applied before or after the train/test split with identical results.
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -237,6 +239,204 @@ def train_test(strategy: str = "drop", path: Path | str = DATA) -> tuple[pd.Data
             data[data["id"].isin(test_ids)].reset_index(drop=True))
 
 
+# ---------------------------------------------------------------------------- clinical baselines
+
+# Framingham general cardiovascular risk, office-based model (BMI instead of cholesterol), for
+# patients not treated for hypertension (D'Agostino et al., Circulation 2008):
+#     10-year risk = 1 - s0 ** exp(sum(coefficient * term) - mean)
+FRAMINGHAM = {
+    0: {"ln_age": 2.72107, "ln_bmi": 0.51125, "ln_sbp": 2.81291, "smoke": 0.61868, "diabetes": 0.77763,
+        "s0": 0.94833, "mean": 26.0145},   # women
+    1: {"ln_age": 3.11296, "ln_bmi": 0.79277, "ln_sbp": 1.85508, "smoke": 0.70953, "diabetes": 0.53160,
+        "s0": 0.88431, "mean": 23.9388},   # men
+}
+SBP_RULE = 130  # mmHg: stage 1 hypertension (ACC/AHA 2017)
+
+
+def diabetes_proxy(df: pd.DataFrame) -> pd.Series:
+    """The dataset has no diabetes field; glucose 'well above normal' is the closest stand-in."""
+    return (df["gluc"] == 3).astype(int)
+
+
+def framingham_terms(df: pd.DataFrame) -> np.ndarray:
+    """ln age, ln BMI, ln systolic pressure, smoking and diabetes: the Framingham office model's inputs."""
+    return np.column_stack([np.log(df["age_years"]), np.log(df["bmi"]), np.log(df["ap_hi"]),
+                            df["smoke"], diabetes_proxy(df)])
+
+
+def framingham_risk(df: pd.DataFrame) -> pd.Series:
+    """Published Framingham 10-year CVD risk, as a clinician would compute it, with nothing refitted."""
+    terms = framingham_terms(df)
+    risk = np.empty(len(df))
+    for male, c in FRAMINGHAM.items():
+        rows = df["male"].to_numpy() == male
+        beta = np.array([c["ln_age"], c["ln_bmi"], c["ln_sbp"], c["smoke"], c["diabetes"]])
+        risk[rows] = 1 - c["s0"] ** np.exp(terms[rows] @ beta - c["mean"])
+    return pd.Series(risk, index=df.index)
+
+
+def framingham_design(df: pd.DataFrame) -> np.ndarray:
+    """Framingham's terms once for women and once for men, plus a sex indicator, so that a logistic
+    regression refits the published model's two equations on this population."""
+    male = df["male"].to_numpy()[:, None]
+    terms = framingham_terms(df)
+    return np.column_stack([terms * (1 - male), terms * male, male])
+
+
+# ------------------------------------------------------------------------------------------ models
+
+N_JOBS = int(os.environ.get("CARDIO_JOBS", "4"))
+CV_FOLDS = 5
+# Simplest first: when several models are statistically tied, the earliest in this order is chosen
+SIMPLICITY = ["Framingham form (refit)", "Logistic regression", "Gradient boosting", "Random forest",
+              "Neural network (MLP)"]
+
+
+def cv_splitter(seed: int = SEED):
+    from sklearn.model_selection import StratifiedKFold
+    return StratifiedKFold(CV_FOLDS, shuffle=True, random_state=seed)
+
+
+def model_specs() -> dict[str, tuple]:
+    """Each model with the hyperparameter grid that cross-validation searches."""
+    from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.neural_network import MLPClassifier
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import FunctionTransformer, StandardScaler
+
+    def scaled(name, model):
+        return Pipeline([("scale", StandardScaler()), (name, model)])
+
+    return {
+        "Framingham form (refit)": (
+            Pipeline([("terms", FunctionTransformer(framingham_design)), ("scale", StandardScaler()),
+                      ("lr", LogisticRegression(max_iter=5000))]),
+            {"lr__C": [1.0]}),
+        "Logistic regression": (
+            scaled("lr", LogisticRegression(max_iter=5000)),
+            {"lr__C": [0.01, 0.1, 1.0, 10.0]}),
+        "Random forest": (
+            RandomForestClassifier(n_estimators=200, random_state=SEED, n_jobs=1),
+            {"min_samples_leaf": [10, 30, 100], "max_features": ["sqrt", 0.5]}),
+        "Gradient boosting": (
+            HistGradientBoostingClassifier(max_iter=300, random_state=SEED),
+            {"learning_rate": [0.03, 0.1], "max_leaf_nodes": [15, 31], "min_samples_leaf": [50, 200]}),
+        "Neural network (MLP)": (
+            scaled("mlp", MLPClassifier(early_stopping=True, max_iter=300, random_state=SEED)),
+            {"mlp__hidden_layer_sizes": [(32,), (64, 32)], "mlp__alpha": [1e-4, 1e-2]}),
+    }
+
+
+def classification_metrics(y, score, threshold: float) -> dict:
+    """AUC from the score; accuracy, sensitivity and specificity from score >= threshold."""
+    from sklearn.metrics import roc_auc_score
+
+    y = np.asarray(y)
+    pred = np.asarray(score) >= threshold
+    return {"auc": roc_auc_score(y, score), "accuracy": (pred == y).mean(),
+            "sensitivity": pred[y == 1].mean(), "specificity": (~pred[y == 0]).mean()}
+
+
+def accuracy_threshold(y, score) -> float:
+    """The cut-off on a score that classifies the given (training) patients most accurately."""
+    y, score = np.asarray(y), np.asarray(score)
+    candidates = np.unique(np.quantile(score, np.linspace(0.01, 0.99, 197)))
+    return candidates[np.argmax([((score >= t) == y).mean() for t in candidates])]
+
+
+def compare_models(train: pd.DataFrame, features: list[str] = FEATURES, specs: dict | None = None,
+                   n_jobs: int = N_JOBS) -> tuple[pd.DataFrame, dict]:
+    """Cross-validated comparison of the clinical baselines and the machine-learning models.
+
+    Everything is scored on the same five validation folds of the training patients. The baselines
+    fit nothing; where a baseline needs a cut-off (systolic pressure alone, published Framingham risk),
+    it is chosen on the other four folds. Each model's grid is searched by AUC, and its row reports
+    the best setting. Returns the table and the fitted searches (refitted on all training patients).
+    """
+    from sklearn.metrics import make_scorer, recall_score
+    from sklearn.model_selection import GridSearchCV
+
+    X, y = train[features], train[TARGET]
+    cv = cv_splitter()
+    rows = []
+    baselines = [
+        (f"Rule: systolic ≥ {SBP_RULE} mmHg", (train["ap_hi"] >= SBP_RULE).astype(float), 0.5),
+        ("Systolic pressure alone", train["ap_hi"].astype(float), None),
+        ("Framingham (published)", framingham_risk(train), None),
+    ]
+    for name, score, fixed in baselines:
+        folds = []
+        for tr, va in cv.split(X, y):
+            cut = fixed if fixed is not None else accuracy_threshold(y.iloc[tr], score.iloc[tr])
+            folds.append(classification_metrics(y.iloc[va], score.iloc[va], cut))
+        f = pd.DataFrame(folds)
+        rows.append({"model": name, "kind": "clinical baseline", "auc": f["auc"].mean(), "auc_sd": f["auc"].std(),
+                     **f[["accuracy", "sensitivity", "specificity"]].mean().to_dict(),
+                     "best setting": "-" if fixed is not None else "cut-off chosen on training folds",
+                     "fit seconds": 0.0})
+
+    scoring = {"auc": "roc_auc", "accuracy": "accuracy", "sensitivity": make_scorer(recall_score),
+               "specificity": make_scorer(recall_score, pos_label=0)}
+    searches = {}
+    for name, (estimator, grid) in (specs or model_specs()).items():
+        search = GridSearchCV(estimator, grid, scoring=scoring, refit="auc", cv=cv, n_jobs=n_jobs)
+        search.fit(X, y)
+        r, i = search.cv_results_, search.best_index_
+        rows.append({"model": name, "kind": "machine learning", "auc": r["mean_test_auc"][i],
+                     "auc_sd": r["std_test_auc"][i],
+                     **{m: r[f"mean_test_{m}"][i] for m in ("accuracy", "sensitivity", "specificity")},
+                     "best setting": ", ".join(f"{k.split('__')[-1]}={v}" for k, v in search.best_params_.items()),
+                     "fit seconds": r["mean_fit_time"][i]})
+        searches[name] = search
+    return pd.DataFrame(rows).set_index("model"), searches
+
+
+def choose_model(table: pd.DataFrame) -> str:
+    """The simplest machine-learning model whose CV AUC is within one standard error of the best.
+
+    Differences smaller than the fold-to-fold noise are not evidence that one model is better, so they
+    should not buy complexity (the 'one-standard-error rule').
+    """
+    ml = table[table["kind"] == "machine learning"]
+    best = ml["auc"].idxmax()
+    margin = ml.loc[best, "auc_sd"] / math.sqrt(CV_FOLDS)
+    tied = ml.index[ml["auc"] >= ml.loc[best, "auc"] - margin]
+    return min(tied, key=SIMPLICITY.index)
+
+
+def feature_set_comparison(train: pd.DataFrame, searches: dict, names: list[str],
+                           n_jobs: int = N_JOBS) -> pd.DataFrame:
+    """CV AUC of the chosen settings with the recorded features only, and with the derived ones too."""
+    from sklearn.base import clone
+    from sklearn.model_selection import cross_val_score
+
+    rows = []
+    for name in names:
+        for label, cols in (("recorded only", BASE_FEATURES), ("recorded + derived", FEATURES)):
+            s = cross_val_score(clone(searches[name].best_estimator_), train[cols], train[TARGET],
+                                cv=cv_splitter(), scoring="roc_auc", n_jobs=n_jobs)
+            rows.append({"model": name, "features": label, "auc": s.mean(), "auc_sd": s.std(ddof=1)})
+    return pd.DataFrame(rows).pivot(index="model", columns="features", values="auc")
+
+
+def learning_curve_auc(train: pd.DataFrame, estimators: dict,
+                       sizes: tuple = (0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1.0),
+                       n_jobs: int = N_JOBS) -> pd.DataFrame:
+    """Validation AUC as the number of training patients grows (sizes are shares of a training fold):
+    does the model run out of data, or of information in the features?"""
+    from sklearn.base import clone
+    from sklearn.model_selection import learning_curve
+
+    rows = []
+    for name, est in estimators.items():
+        n, _, val = learning_curve(clone(est), train[FEATURES], train[TARGET], train_sizes=list(sizes),
+                                   cv=cv_splitter(), scoring="roc_auc", n_jobs=n_jobs, shuffle=True,
+                                   random_state=SEED)
+        rows += [{"model": name, "patients": k, "auc": v.mean(), "auc_sd": v.std(ddof=1)} for k, v in zip(n, val)]
+    return pd.DataFrame(rows)
+
+
 # --------------------------------------------------------------------------------------------- CLI
 
 def _cmd_clean(args: argparse.Namespace) -> None:
@@ -260,11 +460,25 @@ def _cmd_clean(args: argparse.Namespace) -> None:
     print(f"\nwritten: {OUTPUTS / 'cleaning_summary.csv'}, {OUTPUTS / 'repair_log.csv'}")
 
 
+def _cmd_compare(args: argparse.Namespace) -> None:
+    train, _ = train_test(args.strategy, args.data)
+    print(f"{len(train):,} training patients ({args.strategy}), {CV_FOLDS}-fold cross-validation\n")
+    table, _ = compare_models(train)
+    print(table.drop(columns="best setting").to_string(float_format=lambda x: f"{x:.4f}"))
+    print(f"\nchosen (one-standard-error rule): {choose_model(table)}")
+    OUTPUTS.mkdir(exist_ok=True)
+    table.to_csv(OUTPUTS / "model_comparison.csv")
+    print(f"written: {OUTPUTS / 'model_comparison.csv'}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--data", default=DATA, help="path to cardio.csv")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("clean", help="data-quality audit and cleaning strategies").set_defaults(func=_cmd_clean)
+    compare = sub.add_parser("compare", help="cross-validated comparison of baselines and models")
+    compare.add_argument("--strategy", default="drop", choices=STRATEGIES)
+    compare.set_defaults(func=_cmd_compare)
     args = parser.parse_args(argv)
     args.func(args)
 

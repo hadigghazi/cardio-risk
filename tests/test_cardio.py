@@ -129,3 +129,60 @@ def test_train_test_uses_the_same_patients_for_every_strategy(tmp_path):
     assert 3 in set(train_r["id"]) | set(test_r["id"]) and 3 not in set(train_d["id"]) | set(test_d["id"])
     assert 8 not in set(train_r["id"]) | set(test_r["id"])
     assert set(cardio.FEATURES) <= set(train_d.columns)
+
+
+# ------------------------------------------------------------------------------------------ models
+
+def synthetic_patients(n=600, seed=0):
+    """Prepared patients whose diagnosis depends on systolic pressure and age, plus noise."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    df = pd.DataFrame({
+        "id": range(n), "age": rng.integers(40 * 365, 65 * 365, n), "gender": rng.integers(1, 3, n),
+        "height": rng.normal(165, 8, n).round(), "weight": rng.normal(74, 12, n).round(),
+        "ap_hi": rng.normal(128, 16, n).round().astype(int), "cholesterol": rng.integers(1, 4, n),
+        "gluc": rng.integers(1, 4, n), "smoke": rng.integers(0, 2, n), "alco": rng.integers(0, 2, n),
+        "active": rng.integers(0, 2, n)})
+    df["ap_lo"] = (df["ap_hi"] * 0.65).round().astype(int)
+    logit = 0.08 * (df["ap_hi"] - 128) + 0.0003 * (df["age"] - 52 * 365)
+    df["cardio"] = (rng.random(n) < 1 / (1 + np.exp(-logit))).astype(int)
+    return cardio.add_features(cardio.prepare(df))
+
+
+def test_framingham_risk_matches_the_published_equation():
+    df = pd.DataFrame({"age_years": [50.0, 60.0], "bmi": [25.0, 30.0], "ap_hi": [120, 150],
+                       "smoke": [0, 1], "gluc": [1, 3], "male": [1, 0]})
+    # by hand: man 50, BMI 25, 120 mmHg -> 8.48%; woman 60, BMI 30, 150 mmHg, smoker, diabetic -> 42.86%
+    assert cardio.framingham_risk(df).round(4).tolist() == [0.0848, 0.4286]
+
+
+def test_classification_metrics():
+    m = cardio.classification_metrics([0, 0, 1, 1], [0.1, 0.6, 0.4, 0.9], 0.5)
+    assert m == {"auc": 0.75, "accuracy": 0.5, "sensitivity": 0.5, "specificity": 0.5}
+
+
+def test_accuracy_threshold_finds_the_separating_cut():
+    assert 3 < cardio.accuracy_threshold([0, 0, 0, 1, 1, 1], [1, 2, 3, 7, 8, 9]) <= 7
+
+
+def test_compare_models_scores_baselines_and_models_on_the_same_folds():
+    from sklearn.linear_model import LogisticRegression
+    train = synthetic_patients()
+    specs = {"Logistic regression": (LogisticRegression(max_iter=2000), {"C": [0.1, 1.0]})}
+    table, searches = cardio.compare_models(train, specs=specs, n_jobs=1)
+    assert list(table["kind"]).count("clinical baseline") == 3
+    assert table.loc["Systolic pressure alone", "auc"] > 0.7          # the planted signal is found
+    assert table.loc["Logistic regression", "auc"] > 0.7
+    assert set(searches) == {"Logistic regression"}
+    assert cardio.choose_model(table) == "Logistic regression"
+
+
+@pytest.mark.parametrize("lr_auc, expected", [
+    (0.802, "Logistic regression"),   # 0.001 behind: within one standard error (0.005 / sqrt 5 = 0.0022)
+    (0.800, "Gradient boosting"),     # 0.003 behind: a real difference
+])
+def test_choose_model_prefers_the_simpler_of_tied_models(lr_auc, expected):
+    table = pd.DataFrame({"kind": ["machine learning"] * 3 + ["clinical baseline"],
+                          "auc": [lr_auc, 0.803, 0.790, 0.9], "auc_sd": [0.005] * 4},
+                         index=["Logistic regression", "Gradient boosting", "Random forest", "Rule"])
+    assert cardio.choose_model(table) == expected

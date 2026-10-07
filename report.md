@@ -480,3 +480,113 @@ Two points about these features:
   combination precomputed, since a split on BMI replaces many splits on height and weight. For
   logistic regression the overlap is handled by regularisation. Section 7 checks whether the derived
   features help at all, by training the same models with and without them.
+## 7. Models
+
+### 7.1 What is compared
+
+Every candidate is evaluated with 5-fold cross-validation on the training patients, using the same
+five folds. The test patients are not touched in this section.
+
+| Candidate | Type | What it uses | Settings searched |
+|---|---|---|---|
+| Rule: systolic ≥ 130 mmHg | clinical baseline | one reading, guideline threshold | none |
+| Systolic pressure alone | clinical baseline | one reading; cut-off chosen on the training folds | none |
+| Framingham (published) | clinical baseline | age, sex, BMI, systolic pressure, smoking, diabetes | none: the 2008 equations as published |
+| Framingham form (refit) | logistic regression | the same terms, one equation per sex | coefficients refitted on these patients |
+| Logistic regression | linear model | all 15 features, standardised | regularisation strength C |
+| Random forest | tree ensemble | all 15 features | leaf size, features per split |
+| Gradient boosting | tree ensemble (histogram GBDT) | all 15 features | learning rate, tree size, leaf size |
+| Neural network (MLP) | multilayer perceptron | all 15 features, standardised | layer sizes, weight decay |
+
+Some notes on the baselines:
+
+- **The Framingham score answers a different question.** It was built to predict a *first*
+  cardiovascular event over the next ten years in people free of CVD, while this dataset records
+  existing disease. The dataset also has no field for blood-pressure treatment, so the equation for
+  untreated patients is used, and no diabetes field, so glucose "well above normal" stands in for
+  diabetes. Using its risk to rank these patients is therefore a reference point, not a fair contest.
+  The refitted version keeps Framingham's functional form but learns the weights from these
+  patients. It shows how much of any gap comes from the form and how much from the population.
+- **Two baselines need a cut-off.** Systolic pressure alone and the published Framingham risk are
+  continuous scores, so the cut-off that classifies the four training folds most accurately is
+  applied to the fifth. Their AUC needs no cut-off.
+
+**Selection rule, fixed in advance.** The final model is the *simplest* machine-learning model whose
+mean cross-validated AUC is within one standard error of the best one. The order of simplicity is:
+Framingham form, logistic regression, gradient boosting, random forest, neural network. A difference
+smaller than the fold-to-fold noise is not evidence, so it should not buy complexity.
+
+### 7.2 Cross-validated comparison
+
+```python
+import time
+
+t0 = time.time()
+comparison, searches = cardio.compare_models(train)
+print(f"{len(searches)} grid searches and 3 baselines, {cardio.CV_FOLDS}-fold CV: {time.time() - t0:.0f} s")
+(comparison.sort_values("auc", ascending=False)
+ .style.format({"auc": "{:.4f}", "auc_sd": "{:.4f}", "accuracy": "{:.1%}", "sensitivity": "{:.1%}",
+                "specificity": "{:.1%}", "fit seconds": "{:.1f}"}))
+```
+
+```python
+order = comparison.sort_values("auc")
+fig, ax = plt.subplots(figsize=(8.2, 3.9))
+y = np.arange(len(order))
+colours = [NO_CVD if k == "machine learning" else MUTED for k in order["kind"]]
+ax.errorbar(order["auc"], y, xerr=order["auc_sd"], fmt="none", ecolor="#b5b4ae", elinewidth=1.5, capsize=3)
+ax.scatter(order["auc"], y, s=60, color=colours, zorder=3)
+for yi, (auc, acc) in enumerate(zip(order["auc"], order["accuracy"])):
+    ax.text(auc + 0.006, yi, f"AUC {auc:.3f}  ·  accuracy {acc:.1%}", va="center", fontsize=8.5, color=INK)
+ax.set_yticks(y, order.index)
+ax.set(xlabel="cross-validated ROC AUC (mean ± SD over 5 folds)", xlim=(order["auc"].min() - 0.03, 0.86),
+       title="Clinical baselines (grey) and machine-learning models (blue)")
+ax.grid(axis="y", visible=False)
+fig.savefig(FIGURES / "fig6_model_comparison.png")
+plt.show()
+```
+
+### 7.3 Do the derived features help?
+
+Section 6 added BMI, pulse pressure, mean arterial pressure and the blood-pressure stage. Here the
+best settings of logistic regression and gradient boosting are cross-validated again, with and
+without them:
+
+```python
+features_effect = cardio.feature_set_comparison(train, searches, ["Logistic regression", "Gradient boosting"])
+features_effect["gain"] = features_effect["recorded + derived"] - features_effect["recorded only"]
+features_effect.style.format("{:.4f}")
+```
+
+### 7.4 Would more data help?
+
+The same models are trained on growing shares of a training fold. If the curve is still rising at
+the full training set, more patients would help. If it is flat, the limit lies in the features.
+
+```python
+curve = cardio.learning_curve_auc(train, {name: searches[name].best_estimator_
+                                          for name in ["Logistic regression", "Gradient boosting"]})
+fig, ax = plt.subplots(figsize=(6.6, 3.5))
+for (name, g), colour in zip(curve.groupby("model"), [CVD, NO_CVD]):
+    ax.plot(g["patients"], g["auc"], "-o", color=colour, lw=2, ms=5, label=name)
+    ax.fill_between(g["patients"], g["auc"] - g["auc_sd"], g["auc"] + g["auc_sd"], color=colour, alpha=0.12, lw=0)
+ax.set(xscale="log", xlabel="training patients (log scale)", ylabel="validation ROC AUC",
+       title="Validation AUC as the training set grows")
+ax.xaxis.set_major_formatter(plt.matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
+ax.legend(loc="lower right")
+fig.savefig(FIGURES / "fig7_learning_curve.png")
+plt.show()
+curve.pivot(index="patients", columns="model", values="auc").style.format("{:.4f}")
+```
+
+### 7.5 The chosen model
+
+```python
+chosen = cardio.choose_model(comparison)
+ml = comparison[comparison["kind"] == "machine learning"]
+best = ml["auc"].idxmax()
+print(f"best cross-validated AUC: {best} ({ml.loc[best, 'auc']:.4f} ± {ml.loc[best, 'auc_sd']:.4f})")
+print(f"one standard error: {ml.loc[best, 'auc_sd'] / np.sqrt(cardio.CV_FOLDS):.4f}")
+print(f"chosen by the one-standard-error rule: {chosen} ({ml.loc[chosen, 'auc']:.4f}), "
+      f"setting: {ml.loc[chosen, 'best setting']}")
+```
