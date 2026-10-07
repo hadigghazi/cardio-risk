@@ -30,7 +30,19 @@ can be trusted and explained.
 | 9 | Reliability: cleaning strategies, reproduced leakage, calibration, subgroups (Q2, Q3) | done |
 | 10 | Using the model on a new patient (`cardio.py train` / `predict`) | done |
 | 11 | Conclusion, limitations, references | done |
-| - | Presentation | after the report |
+| - | Presentation (`presentation/`) | done |
+
+## Presentation
+
+`presentation/build.py` builds `presentation/Cardio-Risk.pptx` (15 slides + 3 backup, Morph
+transitions, speaker notes) from the Slidesgo "Child Meningitis Case Study" template recoloured red. It
+reads the scorecard and the command-line example from `outputs/model.joblib`, so fetch the latest VM run's
+model first. `presentation/script.md` is the spoken script (~8 minutes at 140 words a minute).
+
+## Submission
+
+The zip holds `report.ipynb` (executed on the VM), `cardio.py`, `Cardio-Risk.pptx`, plus
+`data/cardio.csv` and `requirements.txt` so the notebook can be re-run.
 
 ## Running
 

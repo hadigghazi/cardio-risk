@@ -53,6 +53,11 @@ def main() -> None:
         ExecutePreprocessor(timeout=args.timeout, kernel_name="python3").preprocess(
             nb, {"metadata": {"path": str(ROOT)}})
         print(f"executed {len(nb.cells)} cells in {time.time() - t0:.0f} s")
+        figures = sum("image/png" in o.get("data", {}) for c in nb.cells if c.cell_type == "code" for o in c.outputs)
+        shows = len(re.findall(r"plt\.show\(\)", args.source.read_text(encoding="utf-8")))
+        print(f"{figures} figures embedded ({shows} plt.show() calls)")
+        if figures < shows:
+            raise SystemExit("figures missing from the notebook: is MPLBACKEND overriding the inline backend?")
     args.out.parent.mkdir(parents=True, exist_ok=True)
     nbformat.write(nb, args.out)
     print(f"written: {args.out}")
