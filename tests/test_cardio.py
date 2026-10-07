@@ -232,3 +232,59 @@ def test_explanations_find_the_planted_signal():
     assert imp.index[0] == "blood pressure" and imp.loc["blood pressure", "auc drop"] > 0.1
     pd_curve = cardio.partial_dependence_curve(model, train, "ap_hi", [110, 130, 150])
     assert pd_curve.is_monotonic_increasing
+
+
+# ------------------------------------------------------------------------- reliability and use
+
+def test_smote_creates_points_between_same_class_neighbours():
+    import numpy as np
+    X = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [10.0, 10.0], [11.0, 10.0], [10.0, 11.0]])
+    y = np.array([0, 0, 0, 1, 1, 1])
+    sx, sy = cardio.smote(X, y, n_new=20, k=2)
+    assert len(sx) == 40 and (sy == 1).sum() == 20
+    assert (sx[sy == 0] <= 1).all() and (sx[sy == 1] >= 10).all()
+
+
+def test_ppv_at_prevalence():
+    assert cardio.ppv_at_prevalence(0.8, 0.8, 0.5) == pytest.approx(0.8)
+    assert cardio.ppv_at_prevalence(0.8, 0.8, 0.1) == pytest.approx(0.08 / (0.08 + 0.18))
+
+
+def test_subgroup_table_covers_sex_and_age():
+    train = synthetic_patients(800)
+    table = cardio.subgroup_table(train, train["ap_hi"] / 200)
+    assert set(table.index) == {"women", "men", "age < 50", "age 50-59", "age 60+", "everyone"}
+    assert table.loc["women", "patients"] + table.loc["men", "patients"] == table.loc["everyone", "patients"]
+
+
+def test_patient_checks_plausibility_and_builds_features():
+    row = cardio.patient(55, "male", 175, 90, 150, 95, cholesterol=2)
+    assert row.loc[0, "male"] == 1 and row.loc[0, "age_years"] == pytest.approx(55)
+    assert row.loc[0, "bp_stage"] == 3 and set(cardio.FEATURES) <= set(row.columns)
+    with pytest.raises(ValueError, match="ap_hi"):
+        cardio.patient(55, "male", 175, 90, 1500, 95)
+    with pytest.raises(ValueError, match="diastolic >= systolic"):
+        cardio.patient(55, "female", 165, 60, 80, 120)
+    with pytest.raises(ValueError, match="sex"):
+        cardio.patient(55, "m", 175, 90, 120, 80)
+
+
+def test_assess_a_patient_with_a_small_final_bundle(tmp_path):
+    from sklearn.linear_model import LogisticRegression
+    train = synthetic_patients(1500)
+    model = LogisticRegression(max_iter=3000).fit(train[cardio.FEATURES], train["cardio"])
+    bundle = cardio.build_final(train, model=model)
+    path = cardio.save_final(bundle, tmp_path / "model.joblib")
+    loaded = cardio.load_final(path)
+    high = cardio.assess(loaded, cardio.patient(62, "male", 170, 95, 170, 100, cholesterol=3))
+    low = cardio.assess(loaded, cardio.patient(42, "female", 165, 58, 110, 70))
+    assert high["risk"] > low["risk"] and high["points"] > low["points"]
+    assert high["verdict"] == "cardiovascular disease likely"
+    assert 0 < loaded["screening_cutoff"] < 1
+
+
+def test_points_score_with_a_subset_of_factors():
+    train = synthetic_patients(1500)
+    score = cardio.PointsScore(factors=["age_years", "ap_hi"]).fit(train, train["cardio"])
+    assert set(score.table()["factor"]) == {"Age (years)", "Systolic pressure (mmHg)"}
+    assert len(score.predict_proba(train)) == len(train)

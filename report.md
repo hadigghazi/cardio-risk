@@ -680,6 +680,12 @@ test_table.style.format({"test AUC": "{:.3f}", "CV AUC": "{:.3f}", "accuracy": "
                          "sensitivity": "{:.1%}", "specificity": "{:.1%}"})
 ```
 
+**The test set confirms the cross-validation.** Every candidate's test AUC is within 0.004 of its
+cross-validated AUC, and the ranking is unchanged. The models did not overfit, and choosing settings
+on the cross-validation folds did not flatter them. On patients it has never seen, gradient boosting
+reaches an AUC of 0.804 (95% CI 0.797-0.811) and 73.6% accuracy, against 71.3% for the
+systolic ≥ 130 rule.
+
 ```python
 from sklearn.metrics import roc_curve
 
@@ -696,6 +702,20 @@ ax.set(xlabel="1 − specificity (healthy patients flagged)", ylabel="sensitivit
 ax.legend(loc="lower right", fontsize=8)
 fig.savefig(FIGURES / "fig8_roc_test.png")
 plt.show()
+```
+
+The rule is one point on the ROC plane; the model is a whole curve. Holding the rule's specificity
+fixed shows what the model adds at that point:
+
+```python
+rule_spec = rule["specificity"]
+fpr, tpr, thresholds = roc_curve(y_test, test_scores[chosen])
+at_rule = tpr[np.searchsorted(fpr, 1 - rule_spec, side="right") - 1]
+n_sick = int(y_test.sum())
+print(f"at the rule's specificity ({rule_spec:.1%}): rule detects {rule['sensitivity']:.1%} of diseased patients, "
+      f"{chosen.lower()} {at_rule:.1%}")
+print(f"that is {round((at_rule - rule['sensitivity']) * n_sick):,} more of the {n_sick:,} diseased test patients, "
+      f"with the same number of healthy patients flagged")
 ```
 
 ### 8.2 Are the differences real?
@@ -715,6 +735,16 @@ for a, b in pairs:
                   "excludes zero": lo > 0 or hi < 0})
 pd.DataFrame(diffs).set_index("comparison").style.format({"AUC difference": "{:+.4f}"})
 ```
+
+All five intervals exclude zero, but they mean different things:
+
+- **Over random forest and the neural network**, gradient boosting leads by less than 0.002 AUC.
+  With 13,722 test patients even that is statistically detectable, but it would not change a single
+  clinical decision in any meaningful way. The three flexible models are equally good in practice.
+- **Over logistic regression** the lead is 0.012. Small, but real: the trees capture something a
+  linear model on these features cannot (Section 8.4 shows what).
+- **Over Framingham's form refitted** (0.024) and **over systolic pressure alone** (0.050), the gaps
+  are clear.
 
 ### 8.3 Choosing the threshold
 
@@ -751,6 +781,13 @@ plt.show()
 pd.DataFrame(summary).set_index("cut-off").drop(columns="auc").style.format("{:.1%}")
 ```
 
+The screening cut-off, chosen on the training patients alone, detects 80.1% of the diseased test
+patients: the target carries over to unseen patients. The price is specificity. At 0.50 the model
+misses 2,112 of the 6,785 diseased test patients and flags 1,510 of the 6,937 healthy ones. At the
+screening cut-off it misses 1,347 and flags 2,476. Which trade-off is right is not a statistical
+question. It depends on what follows a positive result. For a cheap follow-up examination, the
+screening cut-off is the sensible choice.
+
 ### 8.4 What drives the predictions
 
 Two complementary views. **Grouped permutation importance** asks how much test AUC is lost when a
@@ -772,6 +809,11 @@ ax.grid(axis="y", visible=False)
 fig.savefig(FIGURES / "fig10_importance.png")
 plt.show()
 ```
+
+**Blood pressure dominates.** Scrambling the five blood-pressure features costs 0.21 AUC: without
+them the AUC would fall from 0.80 to about 0.59. Age (0.036) and cholesterol (0.030) follow,
+and body size adds a little (0.007). Glucose, the three lifestyle answers and sex together contribute
+almost nothing. This matches the exploratory analysis in Section 5.
 
 ```python
 curves = [("ap_hi", range(100, 191, 5), "systolic pressure (mmHg)"),
@@ -799,6 +841,21 @@ fig.savefig(FIGURES / "fig11_partial_dependence.png")
 plt.show()
 ```
 
+The partial-dependence curves show the *shape* of each effect, and why the trees beat logistic
+regression:
+
+- **Systolic pressure works like a switch, not a slope.** The average predicted risk stays around
+  30-40% below 125 mmHg, climbs steeply between 125 and 150 mmHg, and then stays flat at about 84%.
+  A logistic regression on raw pressure has to draw one straight line in log-odds through this
+  S-shape. The trees follow it. The steep part sits exactly on the guideline's stage 1 and stage 2
+  thresholds (130 and 140 mmHg).
+- **Age, weight and cholesterol raise the risk steadily.** Age goes from about 38% at 40 to 65% at 64,
+  and cholesterol "well above normal" adds about 25 percentage points.
+- **Glucose, smoking and alcohol are flat or slightly *protective*.** This is the reverse-causation
+  pattern from Section 5.2. The model has learned the data correctly, and the data reflects patients
+  who changed their habits after diagnosis. **These curves describe associations in this dataset and
+  must not be read as causal effects**: nothing here suggests that smoking is harmless.
+
 ### 8.5 A points score a doctor can use on paper
 
 If the best model gains only a little over simpler ones, the most useful result might be a
@@ -811,6 +868,12 @@ points = cardio.PointsScore().fit(train, train["cardio"])
 card = points.table()
 card.set_index(["factor", "band"])
 ```
+
+The scorecard reads like the model. Systolic pressure earns up to 27 points, age up to 11,
+cholesterol up to 11, and BMI up to 4. The lifestyle answers and high glucose earn *negative* points,
+for the reverse-causation reason above. No clinician could hand out a score that rewards smoking,
+and these factors carry almost no information anyway (Section 8.4). So a **clinical version** keeps
+only the four factors with a sound direction: age, systolic pressure, BMI and cholesterol.
 
 ```python
 test_scores["Points score"] = points.predict_proba(test)
@@ -837,4 +900,148 @@ ax.yaxis.set_major_formatter(plt.matplotlib.ticker.PercentFormatter(1, decimals=
 ax.legend(loc="upper left", fontsize=8)
 fig.savefig(FIGURES / "fig12_points_score.png")
 plt.show()
+```
+
+```python
+clinical = cardio.PointsScore(factors=["age_years", "ap_hi", "bmi", "cholesterol"]).fit(train, train["cardio"])
+test_scores["Points score (clinical, 4 factors)"] = clinical.predict_proba(test)
+for name in ["Points score", "Points score (clinical, 4 factors)", "Logistic regression", chosen]:
+    m = cardio.classification_metrics(y_test, test_scores[name], 0.5)
+    print(f"{name:<38} AUC {m['auc']:.3f}   accuracy {m['accuracy']:.1%}")
+clinical.table().set_index(["factor", "band"]).T
+```
+
+## 9. Reliability
+
+Section 8 measured how well the model works. This section asks how far those numbers can be
+trusted: how they depend on data handling choices (Q2), and whether the predicted risks hold up as
+risks, for every kind of patient (Q3).
+
+### 9.1 Does the cleaning strategy matter?
+
+The final gradient-boosting setting and the logistic regression are trained three times: on the raw
+training data, on the `drop` training data and on the `repair` training data. All six models are
+scored on the same test patients (those whose records pass every check), so only the training data
+differs.
+
+```python
+strategies = cardio.strategy_comparison({"Gradient boosting": final, "Logistic regression": searches["Logistic regression"].best_estimator_})
+(strategies.pivot(index="strategy", columns="model", values=["test AUC", "test accuracy"])
+ .reindex(list(cardio.STRATEGIES)).style.format("{:.4f}"))
+```
+
+### 9.2 How mistakes inflate reported accuracy
+
+Papers on this dataset report accuracies from 73% to 94%. This experiment reproduces three
+mistakes common in published machine-learning work on medical data and measures the accuracy each
+one would let a study report. Each mistake is shown next to the honest figure for the same model.
+These pipelines are wrong on purpose, and none of them feeds into the model chosen above. Which
+mistakes, if any, particular papers made cannot be known from here.
+
+```python
+t0 = time.time()
+correct_acc = cardio.classification_metrics(y_test, test_scores[chosen], 0.5)["accuracy"]
+leakage = cardio.leakage_experiments(train, test, correct_acc)
+print(f"leakage experiments: {time.time() - t0:.0f} s")
+leakage.style.format({"reported accuracy": "{:.1%}"}).hide(axis="index")
+```
+
+### 9.3 Can the predicted risks be taken at face value?
+
+A risk of 70% should mean that about 70 of 100 such patients have CVD. The calibration curve groups
+the test patients by predicted risk and compares each group's average prediction with the share who
+actually have CVD. The Brier score (the mean squared error of the risks) sums up both calibration
+and discrimination: lower is better, and always predicting 50% scores 0.25.
+
+```python
+from sklearn.calibration import calibration_curve
+from sklearn.metrics import brier_score_loss
+
+fig, ax = plt.subplots(figsize=(5.4, 5.0))
+ax.plot([0, 1], [0, 1], ls="--", lw=0.8, color=MUTED, label="perfect calibration")
+for name, colour in [(chosen, NO_CVD), ("Logistic regression", MUTED), ("Points score", CVD)]:
+    observed, predicted = calibration_curve(y_test, test_scores[name], n_bins=10, strategy="quantile")
+    brier = brier_score_loss(y_test, test_scores[name])
+    ax.plot(predicted, observed, "-o", color=colour, lw=1.8, ms=4, label=f"{name} (Brier {brier:.4f})")
+ax.set(xlabel="predicted risk (test patients, 10 equal-sized groups)", ylabel="share with CVD",
+       title="Calibration on the test patients", xlim=(0, 1), ylim=(0, 1))
+ax.legend(loc="upper left", fontsize=8)
+fig.savefig(FIGURES / "fig13_calibration.png")
+plt.show()
+```
+
+### 9.4 Does the model work equally well for everyone?
+
+```python
+subgroups = cardio.subgroup_table(test, test_scores[chosen])
+subgroups.style.format({"patients": "{:,}", "share with CVD": "{:.1%}", "mean predicted risk": "{:.1%}",
+                        "AUC": "{:.3f}", "sensitivity": "{:.1%}", "specificity": "{:.1%}"})
+```
+
+### 9.5 What the numbers mean outside this dataset
+
+Half the patients in this dataset have CVD. In the population that attends a routine check-up the
+share is much lower, and this changes what a positive prediction means. Sensitivity and
+specificity describe the model and carry over. The **positive predictive value**, the chance that a
+flagged patient really has CVD, depends on how common the disease is:
+
+```python
+m_acc = cardio.classification_metrics(y_test, test_scores[chosen], 0.5)
+m_scr = cardio.classification_metrics(y_test, test_scores[chosen], cut_screen)
+ppv = pd.DataFrame({f"{label} (sens {m['sensitivity']:.0%}, spec {m['specificity']:.0%})":
+                    {f"{p:.0%}": cardio.ppv_at_prevalence(m["sensitivity"], m["specificity"], p)
+                     for p in (0.5, 0.3, 0.2, 0.1, 0.05)}
+                    for label, m in [("accuracy cut-off", m_acc), ("screening cut-off", m_scr)]})
+ppv.index.name = "share of patients with CVD"
+ppv.style.format("{:.0%}")
+```
+
+## 10. Using the model
+
+The project's goal was a model that checks a patient for cardiovascular disease. `cardio.py` turns
+the chosen model into a tool that does this. It saves the model with its two cut-offs and the
+scorecard. It also checks a new examination with the same plausibility rules as the data, so an
+impossible reading is rejected instead of scored, and then reports the risk, the verdict and the
+points.
+
+```python
+# the setting saved for the command line must be the one this report selected
+selected = {k: v for k, v in final.get_params().items() if k in cardio.FINAL_PARAMS}
+assert selected == cardio.FINAL_PARAMS, (selected, cardio.FINAL_PARAMS)
+
+bundle = cardio.build_final(train, model=final)
+print("saved:", cardio.save_final(bundle).relative_to(ROOT))
+print(f"screening cut-off: {bundle['screening_cutoff']:.3f}")
+```
+
+Two invented examination records show the output:
+
+```python
+examples = {
+    "62-year-old man, 165/100 mmHg, BMI 33, cholesterol well above normal":
+        dict(age=62, sex="male", height=172, weight=98, systolic=165, diastolic=100, cholesterol=3),
+    "44-year-old woman, 115/75 mmHg, BMI 22, all results normal":
+        dict(age=44, sex="female", height=165, weight=60, systolic=115, diastolic=75),
+    "55-year-old woman, 130/85 mmHg, BMI 27, cholesterol above normal":
+        dict(age=55, sex="female", height=160, weight=69, systolic=130, diastolic=85, cholesterol=2),
+}
+rows = []
+for label, values in examples.items():
+    r = cardio.assess(bundle, cardio.patient(**values))
+    rows.append({"patient": label, "predicted risk": r["risk"], "verdict": r["verdict"],
+                 "screening": r["screening"], "points": r["points"], "risk from points": r["points_risk"]})
+pd.DataFrame(rows).set_index("patient").style.format({"predicted risk": "{:.0%}", "risk from points": "{:.0%}"})
+```
+
+```python
+try:
+    cardio.patient(age=50, sex="male", height=175, weight=80, systolic=1400, diastolic=90)
+except ValueError as e:
+    print("rejected:", e)
+```
+
+The same works from a terminal, after `python cardio.py train`:
+
+```
+$ python cardio.py predict --age 62 --sex male --height 172 --weight 98 --systolic 165 --diastolic 100 --cholesterol 3
 ```

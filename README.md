@@ -26,9 +26,9 @@ can be trusted and explained.
 | 5 | Exploratory analysis (training patients only) | done |
 | 6 | Feature engineering | done |
 | 7 | Models: baselines, LR, RF, gradient boosting, MLP; 5-fold CV (Q1) | done |
-| 8 | Final model on the test set; explanation; points score | code done; text after the VM results |
-| 9 | Reliability: cleaning strategies, reproduced leakage, calibration, subgroups (Q2, Q3) | |
-| 10 | Using the model on a new patient | |
+| 8 | Final model on the test set; explanation; points score | done |
+| 9 | Reliability: cleaning strategies, reproduced leakage, calibration, subgroups (Q2, Q3) | code done; text after the VM results |
+| 10 | Using the model on a new patient (`cardio.py train` / `predict`) | done |
 | 11 | Conclusion and limitations | |
 | - | Presentation | after the report |
 

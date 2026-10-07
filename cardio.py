@@ -8,6 +8,9 @@ this file always use the same code:
 
     python cardio.py clean      data-quality audit and the three cleaning strategies, side by side
     python cardio.py compare    cross-validated comparison of the clinical baselines and the models
+    python cardio.py train      fit the final model and save it to outputs/model.joblib
+    python cardio.py predict --age 55 --sex male --height 175 --weight 90 --systolic 150 --diastolic 95
+                                assess one patient with the saved model
 
 Cleaning works one row at a time with fixed rules (no statistic is learned from the data), so it can
 be applied before or after the train/test split with identical results.
@@ -500,15 +503,19 @@ class PointsScore:
     to a risk with a one-variable logistic regression on the training patients.
     """
 
-    def __init__(self, unit: float = 0.1):
+    def __init__(self, unit: float = 0.1, factors: list[str] | None = None):
         self.unit = unit
+        self.factors = factors or [*POINTS_BANDS, *POINTS_LEVELS]
 
     def _bands(self, df: pd.DataFrame) -> pd.DataFrame:
         cols = {}
-        for col, (edges, labels) in POINTS_BANDS.items():
-            cols[col] = pd.Categorical(pd.cut(df[col], edges, labels=labels, right=False), labels)
-        for col, levels in POINTS_LEVELS.items():
-            cols[col] = pd.Categorical(df[col].map(levels), list(levels.values()))
+        for col in self.factors:
+            if col in POINTS_BANDS:
+                edges, labels = POINTS_BANDS[col]
+                cols[col] = pd.Categorical(pd.cut(df[col], edges, labels=labels, right=False), labels)
+            else:
+                levels = POINTS_LEVELS[col]
+                cols[col] = pd.Categorical(df[col].map(levels), list(levels.values()))
         return pd.DataFrame(cols, index=df.index)
 
     def _design(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -532,7 +539,7 @@ class PointsScore:
     def table(self) -> pd.DataFrame:
         """The scorecard: every band of every factor with its points (reference bands score 0)."""
         rows = []
-        for col in [*POINTS_BANDS, *POINTS_LEVELS]:
+        for col in self.factors:
             labels = POINTS_BANDS[col][1] if col in POINTS_BANDS else list(POINTS_LEVELS[col].values())
             for label in labels:
                 rows.append({"factor": POINTS_LABELS[col], "band": label,
@@ -596,6 +603,202 @@ def partial_dependence_curve(model, df: pd.DataFrame, feature: str, values) -> p
     return pd.Series(out, name=feature)
 
 
+# ------------------------------------------------------------------------------------ reliability
+
+def strategy_comparison(estimators: dict, path: Path | str = DATA) -> pd.DataFrame:
+    """Each estimator trained on each cleaning strategy's training patients and scored on the common
+    test patients (those whose records pass every check), so only the training data differs."""
+    from sklearn.base import clone
+    from sklearn.metrics import roc_auc_score
+
+    common = set(train_test("drop", path)[1]["id"])
+    rows = []
+    for strategy in STRATEGIES:
+        tr, te = train_test(strategy, path)
+        te = te[te["id"].isin(common)]
+        for name, est in estimators.items():
+            model = clone(est).fit(tr[FEATURES], tr[TARGET])
+            risk = model.predict_proba(te[FEATURES])[:, 1]
+            rows.append({"model": name, "strategy": strategy, "training patients": len(tr),
+                         "test AUC": roc_auc_score(te[TARGET], risk),
+                         "test accuracy": ((risk >= 0.5) == te[TARGET]).mean()})
+    return pd.DataFrame(rows)
+
+
+def smote(X: np.ndarray, y: np.ndarray, n_new: int, k: int = 5, seed: int = SEED):
+    """SMOTE: new patients interpolated between a patient and one of its k nearest neighbours of the
+    same class, n_new per class. Written out here because the leakage experiment needs nothing more."""
+    from sklearn.neighbors import NearestNeighbors
+
+    rng = np.random.default_rng(seed)
+    new_X, new_y = [], []
+    for c in np.unique(y):
+        Xc = X[y == c]
+        _, nbrs = NearestNeighbors(n_neighbors=k + 1).fit(Xc).kneighbors(Xc)
+        i = rng.integers(0, len(Xc), n_new)
+        j = nbrs[i, rng.integers(1, k + 1, n_new)]
+        lam = rng.random((n_new, 1))
+        new_X.append(Xc[i] + lam * (Xc[j] - Xc[i]))
+        new_y.append(np.full(n_new, c))
+    return np.vstack(new_X), np.concatenate(new_y)
+
+
+def leakage_experiments(train: pd.DataFrame, test: pd.DataFrame, correct_accuracy: float,
+                        seed: int = SEED) -> pd.DataFrame:
+    """Accuracy 'reported' by pipelines that make mistakes common in published work on this kind of
+    data, next to the correct pipeline. Each mistake lets the evaluation see what it should not."""
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import train_test_split
+    from sklearn.neighbors import KNeighborsClassifier
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    rows = [{"pipeline": "Correct: model chosen by cross-validation, scored once on unseen patients",
+             "model": "gradient boosting", "reported accuracy": correct_accuracy}]
+
+    # 1. scoring the model on the patients it was trained on
+    # 50 fully grown trees: enough to show the effect, and they stay well inside the 4 GB container
+    forest = RandomForestClassifier(n_estimators=50, min_samples_leaf=1, random_state=seed, n_jobs=N_JOBS)
+    forest.fit(train[FEATURES], train[TARGET])
+    rows.append({"pipeline": "Mistake 1: accuracy measured on the training patients",
+                 "model": "random forest (fully grown trees)",
+                 "reported accuracy": forest.score(train[FEATURES], train[TARGET])})
+    rows.append({"pipeline": "  (the same forest on unseen patients)", "model": "random forest (fully grown trees)",
+                 "reported accuracy": forest.score(test[FEATURES], test[TARGET])})
+
+    # 2. oversampling (SMOTE) the whole dataset, then splitting it
+    everything = pd.concat([train, test])
+    X, y = everything[FEATURES].to_numpy(float), everything[TARGET].to_numpy()
+    sx, sy = smote(X, y, n_new=len(everything), seed=seed)      # triples the data, as some papers do
+    Xa, ya = np.vstack([X, sx]), np.concatenate([y, sy])
+    Xtr, Xte, ytr, yte = train_test_split(Xa, ya, test_size=TEST_SIZE, stratify=ya, random_state=seed)
+    knn = make_pipeline(StandardScaler(), KNeighborsClassifier(n_neighbors=1))
+    for label, model in [("k-nearest neighbours (k = 1)", knn), ("random forest (fully grown trees)", forest)]:
+        model.fit(Xtr, ytr)
+        rows.append({"pipeline": "Mistake 2: SMOTE oversampling before the train/test split", "model": label,
+                     "reported accuracy": model.score(Xte, yte)})
+    # the same models with SMOTE applied correctly: on the training patients only
+    tx, ty = train[FEATURES].to_numpy(float), train[TARGET].to_numpy()
+    sx, sy = smote(tx, ty, n_new=len(train), seed=seed)
+    for label, model in [("k-nearest neighbours (k = 1)", knn), ("random forest (fully grown trees)", forest)]:
+        model.fit(np.vstack([tx, sx]), np.concatenate([ty, sy]))
+        rows.append({"pipeline": "  (SMOTE on the training patients only, scored on unseen patients)", "model": label,
+                     "reported accuracy": model.score(test[FEATURES].to_numpy(float), test[TARGET])})
+
+    # 3. trying many random splits and reporting the luckiest
+    lr = make_pipeline(StandardScaler(), LogisticRegression(C=0.1, max_iter=5000))
+    accs = []
+    for s in range(50):
+        a, b = train_test_split(everything, test_size=TEST_SIZE, stratify=everything[TARGET], random_state=s)
+        accs.append(lr.fit(a[FEATURES], a[TARGET]).score(b[FEATURES], b[TARGET]))
+    rows.append({"pipeline": "Mistake 3: best of 50 random train/test splits", "model": "logistic regression",
+                 "reported accuracy": max(accs)})
+    rows.append({"pipeline": "  (the median split)", "model": "logistic regression",
+                 "reported accuracy": float(np.median(accs))})
+    return pd.DataFrame(rows)
+
+
+def subgroup_table(df: pd.DataFrame, risk, threshold: float = 0.5) -> pd.DataFrame:
+    """AUC, sensitivity, specificity and mean predicted vs observed risk, by sex and by age band."""
+    from sklearn.metrics import roc_auc_score
+
+    d = df.assign(risk=np.asarray(risk))
+    groups = {
+        "women": d["male"] == 0, "men": d["male"] == 1,
+        "age < 50": d["age_years"] < 50, "age 50-59": d["age_years"].between(50, 60, inclusive="left"),
+        "age 60+": d["age_years"] >= 60, "everyone": pd.Series(True, index=d.index),
+    }
+    rows = []
+    for name, mask in groups.items():
+        g = d[mask]
+        m = classification_metrics(g[TARGET], g["risk"], threshold)
+        rows.append({"group": name, "patients": len(g), "share with CVD": g[TARGET].mean(),
+                     "mean predicted risk": g["risk"].mean(), "AUC": m["auc"],
+                     "sensitivity": m["sensitivity"], "specificity": m["specificity"]})
+    return pd.DataFrame(rows).set_index("group")
+
+
+def ppv_at_prevalence(sensitivity: float, specificity: float, prevalence: float) -> float:
+    """Share of flagged patients who really have CVD, in a population with the given prevalence."""
+    tp = sensitivity * prevalence
+    fp = (1 - specificity) * (1 - prevalence)
+    return tp / (tp + fp)
+
+
+# ------------------------------------------------------------------------------- using the model
+
+MODEL_FILE = OUTPUTS / "model.joblib"
+# The setting Section 7 selected for gradient boosting by cross-validation (the report checks that
+# its own search still agrees with this before saving the model)
+FINAL_PARAMS = {"learning_rate": 0.01, "max_leaf_nodes": 15, "min_samples_leaf": 50}
+SCREENING_SENSITIVITY = 0.80
+
+
+def final_estimator():
+    from sklearn.ensemble import HistGradientBoostingClassifier
+    return HistGradientBoostingClassifier(max_iter=1000, early_stopping=True, random_state=SEED, **FINAL_PARAMS)
+
+
+def build_final(train: pd.DataFrame, model=None) -> dict:
+    """Everything needed to assess a new patient: the fitted model, the two cut-offs and the scorecard."""
+    model = model if model is not None else final_estimator().fit(train[FEATURES], train[TARGET])
+    oof = out_of_fold(model, train)
+    return {"model": model, "accuracy_cutoff": 0.5,
+            "screening_cutoff": screening_threshold(train[TARGET], oof, SCREENING_SENSITIVITY),
+            "points": PointsScore().fit(train, train[TARGET]), "features": FEATURES}
+
+
+def save_final(bundle: dict, path: Path = MODEL_FILE) -> Path:
+    import joblib
+    path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(bundle, path)
+    return path
+
+
+def load_final(path: Path = MODEL_FILE) -> dict:
+    import joblib
+    if not Path(path).exists():
+        raise FileNotFoundError(f"{path} not found: run `python cardio.py train` first")
+    return joblib.load(path)
+
+
+def patient(age: float, sex: str, height: float, weight: float, systolic: float, diastolic: float,
+            cholesterol: int = 1, glucose: int = 1, smoke: int = 0, alcohol: int = 0, active: int = 1) -> pd.DataFrame:
+    """One patient's examination as a model-ready row, after the same plausibility checks as the data.
+
+    age in years; sex 'female' or 'male'; height cm; weight kg; blood pressure mmHg; cholesterol and
+    glucose 1 normal, 2 above normal, 3 well above normal; smoke, alcohol, active 0 or 1.
+    """
+    if sex not in ("female", "male"):
+        raise ValueError("sex must be 'female' or 'male'")
+    for name, value, allowed in [("cholesterol", cholesterol, (1, 2, 3)), ("glucose", glucose, (1, 2, 3)),
+                                 ("smoke", smoke, (0, 1)), ("alcohol", alcohol, (0, 1)), ("active", active, (0, 1))]:
+        if value not in allowed:
+            raise ValueError(f"{name} must be one of {allowed}, not {value!r}")
+    raw = pd.DataFrame([{"id": 0, "age": age * 365.25, "gender": 2 if sex == "male" else 1, "height": height,
+                         "weight": weight, "ap_hi": systolic, "ap_lo": diastolic, "cholesterol": cholesterol,
+                         "gluc": glucose, "smoke": smoke, "alco": alcohol, "active": active, TARGET: 0}])
+    failed = audit(raw).iloc[0]
+    if failed.any():
+        raise ValueError("implausible examination values: " + ", ".join(failed.index[failed]))
+    return add_features(prepare(raw))
+
+
+def assess(bundle: dict, row: pd.DataFrame) -> dict:
+    """Predicted risk, the verdict at both cut-offs, and the scorecard's points for one patient."""
+    risk = float(bundle["model"].predict_proba(row[bundle["features"]])[:, 1][0])
+    points = bundle["points"]
+    design = points._design(row)[points.points_.index].iloc[0]
+    earned = points.points_[design == 1]
+    return {"risk": risk,
+            "verdict": "cardiovascular disease likely" if risk >= bundle["accuracy_cutoff"] else "cardiovascular disease unlikely",
+            "screening": "refer for examination" if risk >= bundle["screening_cutoff"] else "no referral",
+            "screening_cutoff": bundle["screening_cutoff"],
+            "points": int(earned.sum()), "points_risk": float(points.predict_proba(row)[0]),
+            "points_breakdown": {k: int(v) for k, v in earned.items() if v != 0}}
+
+
 # --------------------------------------------------------------------------------------------- CLI
 
 def _cmd_clean(args: argparse.Namespace) -> None:
@@ -630,6 +833,28 @@ def _cmd_compare(args: argparse.Namespace) -> None:
     print(f"written: {OUTPUTS / 'model_comparison.csv'}")
 
 
+def _cmd_train(args: argparse.Namespace) -> None:
+    train, _ = train_test(args.strategy, args.data)
+    bundle = build_final(train)
+    path = save_final(bundle)
+    print(f"gradient boosting ({FINAL_PARAMS}) fitted on {len(train):,} training patients")
+    print(f"screening cut-off (detects {SCREENING_SENSITIVITY:.0%} of diseased training patients): "
+          f"{bundle['screening_cutoff']:.3f}")
+    print(f"written: {path}")
+
+
+def _cmd_predict(args: argparse.Namespace) -> None:
+    row = patient(args.age, args.sex, args.height, args.weight, args.systolic, args.diastolic,
+                  args.cholesterol, args.glucose, args.smoke, args.alcohol, args.active)
+    result = assess(load_final(), row)
+    print(f"predicted risk of cardiovascular disease: {result['risk']:.0%}")
+    print(f"verdict: {result['verdict']}")
+    print(f"screening (cut-off {result['screening_cutoff']:.2f}): {result['screening']}")
+    print(f"points score: {result['points']} points, risk {result['points_risk']:.0%}")
+    for k, v in result["points_breakdown"].items():
+        print(f"   {v:+d}  {k}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--data", default=DATA, help="path to cardio.csv")
@@ -638,6 +863,22 @@ def main(argv: list[str] | None = None) -> None:
     compare = sub.add_parser("compare", help="cross-validated comparison of baselines and models")
     compare.add_argument("--strategy", default="drop", choices=STRATEGIES)
     compare.set_defaults(func=_cmd_compare)
+    train = sub.add_parser("train", help="fit the final model and save it")
+    train.add_argument("--strategy", default="drop", choices=STRATEGIES)
+    train.set_defaults(func=_cmd_train)
+    predict = sub.add_parser("predict", help="assess one patient with the saved model")
+    predict.add_argument("--age", type=float, required=True, help="years")
+    predict.add_argument("--sex", choices=["female", "male"], required=True)
+    predict.add_argument("--height", type=float, required=True, help="cm")
+    predict.add_argument("--weight", type=float, required=True, help="kg")
+    predict.add_argument("--systolic", type=float, required=True, help="mmHg")
+    predict.add_argument("--diastolic", type=float, required=True, help="mmHg")
+    predict.add_argument("--cholesterol", type=int, default=1, choices=[1, 2, 3])
+    predict.add_argument("--glucose", type=int, default=1, choices=[1, 2, 3])
+    predict.add_argument("--smoke", type=int, default=0, choices=[0, 1])
+    predict.add_argument("--alcohol", type=int, default=0, choices=[0, 1])
+    predict.add_argument("--active", type=int, default=1, choices=[0, 1])
+    predict.set_defaults(func=_cmd_predict)
     args = parser.parse_args(argv)
     args.func(args)
 
