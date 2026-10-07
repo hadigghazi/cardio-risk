@@ -320,11 +320,14 @@ def model_specs() -> dict[str, tuple]:
             RandomForestClassifier(n_estimators=200, random_state=SEED, n_jobs=1),
             {"min_samples_leaf": [10, 30, 100], "max_features": ["sqrt", 0.5]}),
         "Gradient boosting": (
-            HistGradientBoostingClassifier(max_iter=300, random_state=SEED),
-            {"learning_rate": [0.03, 0.1], "max_leaf_nodes": [15, 31], "min_samples_leaf": [50, 200]}),
+            # early stopping on 10% of the training data (sklearn's default above 10,000 rows) ends
+            # the boosting long before max_iter at the larger learning rates
+            HistGradientBoostingClassifier(max_iter=1000, early_stopping=True, random_state=SEED),
+            {"learning_rate": [0.01, 0.03, 0.1], "max_leaf_nodes": [7, 15, 31],
+             "min_samples_leaf": [20, 50, 200]}),
         "Neural network (MLP)": (
             scaled("mlp", MLPClassifier(early_stopping=True, max_iter=300, random_state=SEED)),
-            {"mlp__hidden_layer_sizes": [(32,), (64, 32)], "mlp__alpha": [1e-4, 1e-2]}),
+            {"mlp__hidden_layer_sizes": [(32,), (64, 32), (128, 64)], "mlp__alpha": [1e-5, 1e-4, 1e-2]}),
     }
 
 
