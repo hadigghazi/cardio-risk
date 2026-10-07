@@ -440,6 +440,162 @@ def learning_curve_auc(train: pd.DataFrame, estimators: dict,
     return pd.DataFrame(rows)
 
 
+# ------------------------------------------------------------------------------------- evaluation
+
+def bootstrap(y, scores: dict, statistic, n: int = 2000, seed: int = SEED) -> pd.DataFrame:
+    """Percentile bootstrap of statistic(y, score) for several scores, resampling the same patients
+    for all of them, so differences between scores can be bootstrapped too. One row per resample."""
+    y = np.asarray(y)
+    scores = {k: np.asarray(v) for k, v in scores.items()}
+    rng = np.random.default_rng(seed)
+    rows = []
+    for _ in range(n):
+        idx = rng.integers(0, len(y), len(y))
+        rows.append({k: statistic(y[idx], s[idx]) for k, s in scores.items()})
+    return pd.DataFrame(rows)
+
+
+def interval(samples: pd.Series, level: float = 0.95) -> tuple[float, float]:
+    a = (1 - level) / 2
+    return float(samples.quantile(a)), float(samples.quantile(1 - a))
+
+
+def out_of_fold(estimator, train: pd.DataFrame, features: list[str] = FEATURES,
+                n_jobs: int = N_JOBS) -> np.ndarray:
+    """Each training patient's predicted risk from a model that did not see that patient."""
+    from sklearn.base import clone
+    from sklearn.model_selection import cross_val_predict
+
+    return cross_val_predict(clone(estimator), train[features], train[TARGET], cv=cv_splitter(),
+                             method="predict_proba", n_jobs=n_jobs)[:, 1]
+
+
+def screening_threshold(y, risk, sensitivity: float = 0.80) -> float:
+    """The highest cut-off that still detects at least `sensitivity` of the diseased patients."""
+    y, risk = np.asarray(y), np.asarray(risk)
+    sick = np.sort(risk[y == 1])
+    return float(sick[int(math.floor((1 - sensitivity) * len(sick)))])
+
+
+# ---------------------------------------------------------------------------------- points score
+
+POINTS_BANDS = {
+    "age_years": ([0, 45, 50, 55, 60, 200], ["<45", "45-49", "50-54", "55-59", "60+"]),
+    "ap_hi": ([0, 120, 130, 140, 160, 400], ["<120", "120-129", "130-139", "140-159", "160+"]),
+    "bmi": ([0, 25, 30, 35, 200], ["<25", "25-29.9", "30-34.9", "35+"]),
+}
+POINTS_LEVELS = {"cholesterol": {1: "normal", 2: "above normal", 3: "well above normal"},
+                 "gluc": {1: "normal", 2: "above normal", 3: "well above normal"},
+                 "smoke": {0: "no", 1: "yes"}, "alco": {0: "no", 1: "yes"}, "active": {0: "no", 1: "yes"}}
+POINTS_LABELS = {"age_years": "Age (years)", "ap_hi": "Systolic pressure (mmHg)", "bmi": "BMI (kg/m²)",
+                 "cholesterol": "Cholesterol", "gluc": "Glucose", "smoke": "Smokes", "alco": "Drinks alcohol",
+                 "active": "Physically active"}
+
+
+class PointsScore:
+    """A paper scorecard: each factor's band earns whole points, and the total maps to a risk.
+
+    Fitted as a logistic regression on banded factors (lowest band as reference). One point is worth
+    `unit` in log-odds, so every coefficient is rounded to whole points. The total is then mapped back
+    to a risk with a one-variable logistic regression on the training patients.
+    """
+
+    def __init__(self, unit: float = 0.1):
+        self.unit = unit
+
+    def _bands(self, df: pd.DataFrame) -> pd.DataFrame:
+        cols = {}
+        for col, (edges, labels) in POINTS_BANDS.items():
+            cols[col] = pd.Categorical(pd.cut(df[col], edges, labels=labels, right=False), labels)
+        for col, levels in POINTS_LEVELS.items():
+            cols[col] = pd.Categorical(df[col].map(levels), list(levels.values()))
+        return pd.DataFrame(cols, index=df.index)
+
+    def _design(self, df: pd.DataFrame) -> pd.DataFrame:
+        return pd.get_dummies(self._bands(df), drop_first=True, dtype=float)
+
+    def fit(self, df: pd.DataFrame, y):
+        from sklearn.linear_model import LogisticRegression
+
+        X = self._design(df)
+        lr = LogisticRegression(C=1.0, max_iter=5000).fit(X, y)
+        self.points_ = pd.Series(np.round(lr.coef_[0] / self.unit).astype(int), index=X.columns)
+        self.calibration_ = LogisticRegression(C=1e6, max_iter=5000).fit(self.total(df).to_frame(), y)
+        return self
+
+    def total(self, df: pd.DataFrame) -> pd.Series:
+        return (self._design(df)[self.points_.index] @ self.points_).rename("points")
+
+    def predict_proba(self, df: pd.DataFrame) -> np.ndarray:
+        return self.calibration_.predict_proba(self.total(df).to_frame())[:, 1]
+
+    def table(self) -> pd.DataFrame:
+        """The scorecard: every band of every factor with its points (reference bands score 0)."""
+        rows = []
+        for col in [*POINTS_BANDS, *POINTS_LEVELS]:
+            labels = POINTS_BANDS[col][1] if col in POINTS_BANDS else list(POINTS_LEVELS[col].values())
+            for label in labels:
+                rows.append({"factor": POINTS_LABELS[col], "band": label,
+                             "points": int(self.points_.get(f"{col}_{label}", 0))})
+        return pd.DataFrame(rows)
+
+    def risk_by_total(self, totals) -> pd.Series:
+        totals = np.asarray(list(totals))
+        return pd.Series(self.calibration_.predict_proba(pd.DataFrame({"points": totals}))[:, 1], index=totals)
+
+
+# ---------------------------------------------------------------------------------- explanation
+
+# Features that carry the same information are permuted together: permuting systolic pressure alone
+# would leave mean arterial pressure, pulse pressure and the stage to stand in for it.
+FEATURE_GROUPS = {
+    "blood pressure": ["ap_hi", "ap_lo", "pulse_pressure", "mean_arterial_pressure", "bp_stage"],
+    "age": ["age_years"],
+    "body size (height, weight, BMI)": ["height", "weight", "bmi"],
+    "cholesterol": ["cholesterol"],
+    "glucose": ["gluc"],
+    "physical activity": ["active"],
+    "smoking": ["smoke"],
+    "alcohol": ["alco"],
+    "sex": ["male"],
+}
+
+
+def grouped_permutation_importance(model, df: pd.DataFrame, groups: dict = FEATURE_GROUPS,
+                                   n_repeats: int = 10, seed: int = SEED) -> pd.DataFrame:
+    """Drop in AUC when each group of features is shuffled across patients (the same shuffle for every
+    column of the group, so the group stays internally consistent but loses its link to the diagnosis)."""
+    from sklearn.metrics import roc_auc_score
+
+    rng = np.random.default_rng(seed)
+    X, y = df[FEATURES], df[TARGET].to_numpy()
+    base = roc_auc_score(y, model.predict_proba(X)[:, 1])
+    rows = []
+    for name, cols in groups.items():
+        drops = []
+        for _ in range(n_repeats):
+            shuffled = X.copy()
+            order = rng.permutation(len(X))
+            shuffled[cols] = X[cols].to_numpy()[order]
+            drops.append(base - roc_auc_score(y, model.predict_proba(shuffled)[:, 1]))
+        rows.append({"features": name, "auc drop": np.mean(drops), "sd": np.std(drops, ddof=1)})
+    return pd.DataFrame(rows).set_index("features").sort_values("auc drop", ascending=False)
+
+
+def partial_dependence_curve(model, df: pd.DataFrame, feature: str, values) -> pd.Series:
+    """Average predicted risk when every patient's `feature` is set to each value in turn, with the
+    features derived from it recomputed, so the model never sees an impossible combination."""
+    out = {}
+    for v in values:
+        d = df.copy()
+        d[feature] = v
+        if feature == "ap_hi":  # keep every diastolic reading below the systolic one it is paired with
+            d["ap_lo"] = np.minimum(d["ap_lo"], v - 10)
+        d = add_features(d.drop(columns=DERIVED_FEATURES))
+        out[v] = model.predict_proba(d[FEATURES])[:, 1].mean()
+    return pd.Series(out, name=feature)
+
+
 # --------------------------------------------------------------------------------------------- CLI
 
 def _cmd_clean(args: argparse.Namespace) -> None:

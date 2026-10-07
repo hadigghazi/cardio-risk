@@ -546,6 +546,29 @@ fig.savefig(FIGURES / "fig6_model_comparison.png")
 plt.show()
 ```
 
+**Every machine-learning model beats every clinical baseline, but the margins are small.**
+
+- **Best model.** Gradient boosting reaches a cross-validated AUC of 0.800 and an accuracy of
+  73.5%. The guideline rule (systolic ≥ 130 mmHg) is right for 71.3% of patients. Out of every 1,000
+  patients, the best model classifies about 22 more correctly than one blood-pressure reading.
+- **The flexible models are tied.** Gradient boosting, random forest and the neural network lie
+  within 0.002 AUC of each other, close to the fold-to-fold standard deviation (about 0.003).
+  Logistic regression is 0.010 behind, so the interactions and curves that trees and networks can
+  represent are worth a little, but only a little.
+- **The guideline's threshold is the best cut-off.** When systolic pressure alone is given the
+  cut-off that classifies the training folds most accurately, the data chooses 130 mmHg, the
+  guideline's own value: the accuracy, sensitivity and specificity are identical to the rule's. The
+  AUC differs only because the rule turns the reading into a yes/no answer.
+- **The published Framingham score ranks these patients worse than systolic pressure alone**
+  (AUC 0.696 vs 0.751). Refitting the same five terms on these patients raises it to 0.780. The
+  functional form is sound; its weights do not transfer to a different population and a different
+  question (existing disease here, a first event within ten years in Framingham). A risk score
+  carried over to a new population has to be recalibrated before its numbers mean anything.
+
+The cross-validated score of each model's *best* setting is slightly optimistic, because that
+setting was chosen on the same folds. With grids this small and 55,000 patients the bias is tiny, but
+it is one reason the test set in Section 8 has the final word.
+
 ### 7.3 Do the derived features help?
 
 Section 6 added BMI, pulse pressure, mean arterial pressure and the blood-pressure stage. Here the
@@ -558,6 +581,12 @@ features_effect["gain"] = features_effect["recorded + derived"] - features_effec
 features_effect.style.format("{:.4f}")
 ```
 
+The derived features change the AUC by less than 0.001 in either direction. That is well inside the
+noise. Both models can build what they need from the recorded values on their own, which is a common
+finding with tabular data this simple. The derived features stay in the final model anyway: they
+cost nothing in accuracy, and they make the explanations in Section 8 easier to read. A clinician
+thinks in BMI and blood-pressure stages, not in height and weight.
+
 ### 7.4 Would more data help?
 
 The same models are trained on growing shares of a training fold. If the curve is still rising at
@@ -567,7 +596,8 @@ the full training set, more patients would help. If it is flat, the limit lies i
 curve = cardio.learning_curve_auc(train, {name: searches[name].best_estimator_
                                           for name in ["Logistic regression", "Gradient boosting"]})
 fig, ax = plt.subplots(figsize=(6.6, 3.5))
-for (name, g), colour in zip(curve.groupby("model"), [CVD, NO_CVD]):
+for name, g in curve.groupby("model"):
+    colour = NO_CVD if name == "Gradient boosting" else MUTED
     ax.plot(g["patients"], g["auc"], "-o", color=colour, lw=2, ms=5, label=name)
     ax.fill_between(g["patients"], g["auc"] - g["auc_sd"], g["auc"] + g["auc_sd"], color=colour, alpha=0.12, lw=0)
 ax.set(xscale="log", xlabel="training patients (log scale)", ylabel="validation ROC AUC",
@@ -579,6 +609,20 @@ plt.show()
 curve.pivot(index="patients", columns="model", values="auc").style.format("{:.4f}")
 ```
 
+The two curves tell different stories:
+
+- **Logistic regression has learned all it can from about 2,000 patients.** Its validation AUC moves
+  by only 0.003 between 2,000 and 44,000 patients.
+- **Gradient boosting needs more data, then slows down.** It needs more patients to estimate its
+  interactions, overtakes logistic regression at around 2,000 patients, and keeps improving. But the
+  last doubling, from 22,000 to 44,000 patients, adds only 0.0015.
+
+More patients of the same kind would therefore add very little. **The ceiling of about 0.80 AUC (73%
+accuracy) is set by the information in the eleven recorded values, not by the amount of data or the
+choice of algorithm.** Widening the search grids points the same way. The first run placed the best
+gradient-boosting and neural-network settings at the edge of their grids, so the grids were
+extended. Both models moved by less than 0.0005 AUC, so they sit on a plateau.
+
 ### 7.5 The chosen model
 
 ```python
@@ -589,4 +633,208 @@ print(f"best cross-validated AUC: {best} ({ml.loc[best, 'auc']:.4f} ± {ml.loc[b
 print(f"one standard error: {ml.loc[best, 'auc_sd'] / np.sqrt(cardio.CV_FOLDS):.4f}")
 print(f"chosen by the one-standard-error rule: {chosen} ({ml.loc[chosen, 'auc']:.4f}), "
       f"setting: {ml.loc[chosen, 'best setting']}")
+```
+
+Gradient boosting has the best cross-validated AUC, and no simpler model comes within one standard
+error of it. Random forest misses by 0.0013 against a margin of 0.0012, a near tie, but the rule was
+fixed in advance, and gradient boosting is also faster to train. **Gradient boosting is the final
+model.** The next section scores it, and every other candidate, once on the test patients.
+
+## 8. The final model on the test set
+
+### 8.1 Every candidate, scored once
+
+The 13,722 test patients have not been used for anything so far. Each candidate is scored on them
+exactly once:
+
+- The machine-learning models use their selected settings, refitted on all training patients.
+- The baselines that need a cut-off use the one chosen on the training patients.
+- AUC confidence intervals come from 2,000 bootstrap resamples of the test patients.
+
+```python
+from sklearn.metrics import roc_auc_score
+
+final = searches[chosen].best_estimator_
+y_test = test["cardio"]
+test_scores = {
+    f"Rule: systolic ≥ {cardio.SBP_RULE} mmHg": (test["ap_hi"] >= cardio.SBP_RULE).astype(float),
+    "Systolic pressure alone": test["ap_hi"].astype(float),
+    "Framingham (published)": cardio.framingham_risk(test),
+    **{name: s.predict_proba(test[cardio.FEATURES])[:, 1] for name, s in searches.items()},
+}
+cutoffs = {name: 0.5 for name in test_scores}
+cutoffs["Systolic pressure alone"] = cardio.accuracy_threshold(train["cardio"], train["ap_hi"])
+cutoffs["Framingham (published)"] = cardio.accuracy_threshold(train["cardio"], cardio.framingham_risk(train))
+
+auc_boot = cardio.bootstrap(y_test, test_scores, roc_auc_score)
+rows = []
+for name, score in test_scores.items():
+    m = cardio.classification_metrics(y_test, score, cutoffs[name])
+    lo, hi = cardio.interval(auc_boot[name])
+    rows.append({"model": name, "test AUC": m["auc"], "95% CI": f"{lo:.3f}-{hi:.3f}",
+                 "CV AUC": comparison.loc[name, "auc"], "accuracy": m["accuracy"],
+                 "sensitivity": m["sensitivity"], "specificity": m["specificity"]})
+test_table = pd.DataFrame(rows).set_index("model").sort_values("test AUC", ascending=False)
+test_table.to_csv(ROOT / "outputs" / "test_results.csv")
+test_table.style.format({"test AUC": "{:.3f}", "CV AUC": "{:.3f}", "accuracy": "{:.1%}",
+                         "sensitivity": "{:.1%}", "specificity": "{:.1%}"})
+```
+
+```python
+from sklearn.metrics import roc_curve
+
+fig, ax = plt.subplots(figsize=(5.6, 5.2))
+for name, colour, lw in [(chosen, NO_CVD, 2.2), ("Logistic regression", MUTED, 1.4),
+                         ("Systolic pressure alone", "#9b9a94", 1.4), ("Framingham (published)", "#c9c8c1", 1.4)]:
+    fpr, tpr, _ = roc_curve(y_test, test_scores[name])
+    ax.plot(fpr, tpr, color=colour, lw=lw, label=f"{name} (AUC {roc_auc_score(y_test, test_scores[name]):.3f})")
+rule = cardio.classification_metrics(y_test, test_scores[f"Rule: systolic ≥ {cardio.SBP_RULE} mmHg"], 0.5)
+ax.plot(1 - rule["specificity"], rule["sensitivity"], "D", color=CVD, ms=8, label=f"rule: systolic ≥ {cardio.SBP_RULE}")
+ax.plot([0, 1], [0, 1], ls="--", lw=0.8, color=MUTED)
+ax.set(xlabel="1 − specificity (healthy patients flagged)", ylabel="sensitivity (diseased patients detected)",
+       title="ROC curves on the test patients", xlim=(0, 1), ylim=(0, 1))
+ax.legend(loc="lower right", fontsize=8)
+fig.savefig(FIGURES / "fig8_roc_test.png")
+plt.show()
+```
+
+### 8.2 Are the differences real?
+
+The same bootstrap resamples score every model, so each AUC difference can be given its own
+interval. If an interval excludes zero, the difference is unlikely to be chance.
+
+```python
+pairs = [(chosen, other) for other in ["Random forest", "Neural network (MLP)", "Logistic regression",
+                                        "Framingham form (refit)", "Systolic pressure alone"]]
+diffs = []
+for a, b in pairs:
+    d = auc_boot[a] - auc_boot[b]
+    lo, hi = cardio.interval(d)
+    diffs.append({"comparison": f"{a} − {b}", "AUC difference": roc_auc_score(y_test, test_scores[a])
+                  - roc_auc_score(y_test, test_scores[b]), "95% CI": f"{lo:+.4f} to {hi:+.4f}",
+                  "excludes zero": lo > 0 or hi < 0})
+pd.DataFrame(diffs).set_index("comparison").style.format({"AUC difference": "{:+.4f}"})
+```
+
+### 8.3 Choosing the threshold
+
+A predicted risk becomes a verdict only through a cut-off. At 0.5 the model maximises accuracy. A
+screening programme usually cares more about not missing sick patients, so a second cut-off is
+chosen **on the training patients**: the highest one that detects at least 80% of the diseased
+training patients, using predictions from models that did not see them (out-of-fold).
+
+```python
+from sklearn.metrics import confusion_matrix
+
+oof = cardio.out_of_fold(final, train)
+cut_screen = cardio.screening_threshold(train["cardio"], oof, 0.80)
+risk_test = test_scores[chosen]
+
+fig, axes = plt.subplots(1, 2, figsize=(9.6, 3.9))
+summary = []
+for ax, (label, cut) in zip(axes, [("accuracy cut-off (0.50)", 0.5), (f"screening cut-off ({cut_screen:.2f})", cut_screen)]):
+    cm = confusion_matrix(y_test, risk_test >= cut)
+    ax.imshow(cm, cmap="Blues", vmin=0, vmax=cm.max() * 1.15)
+    for (i, j), v in np.ndenumerate(cm):
+        ax.text(j, i, f"{v:,}\n{v / cm[i].sum():.0%} of row", ha="center", va="center", fontsize=9,
+                color="white" if v > cm.max() * 0.6 else INK)
+    ax.set_xticks([0, 1], ["predicted healthy", "predicted CVD"])
+    ax.set_yticks([0, 1], ["healthy", "has CVD"])
+    ax.grid(False)
+    ax.set_title(label)
+    m = cardio.classification_metrics(y_test, risk_test, cut)
+    summary.append({"cut-off": label, **m})
+fig.suptitle(f"{chosen} on the test patients", x=0.01, ha="left", fontsize=12, fontweight="bold")
+fig.tight_layout()
+fig.savefig(FIGURES / "fig9_confusion_matrices.png")
+plt.show()
+pd.DataFrame(summary).set_index("cut-off").drop(columns="auc").style.format("{:.1%}")
+```
+
+### 8.4 What drives the predictions
+
+Two complementary views. **Grouped permutation importance** asks how much test AUC is lost when a
+factor is scrambled across patients. Related features are scrambled together, so the four
+blood-pressure features cannot cover for one another. **Partial dependence** asks how the average
+predicted risk changes as one factor is varied for everyone.
+
+```python
+importance = cardio.grouped_permutation_importance(final, test)
+
+fig, ax = plt.subplots(figsize=(6.6, 3.6))
+order = importance.iloc[::-1]
+ax.barh(order.index, order["auc drop"], xerr=order["sd"], color=NO_CVD, height=0.6,
+        error_kw={"ecolor": MUTED, "elinewidth": 1})
+for yi, v in enumerate(order["auc drop"]):
+    ax.text(v + 0.004, yi, f"{v:.3f}", va="center", fontsize=8.5, color=INK)
+ax.set(xlabel="drop in test AUC when the factor is scrambled", title="What the model relies on")
+ax.grid(axis="y", visible=False)
+fig.savefig(FIGURES / "fig10_importance.png")
+plt.show()
+```
+
+```python
+curves = [("ap_hi", range(100, 191, 5), "systolic pressure (mmHg)"),
+          ("age_years", range(40, 66, 2), "age (years)"),
+          ("weight", range(50, 121, 5), "weight (kg)"),
+          ("cholesterol", [1, 2, 3], "cholesterol (1 normal - 3 well above)"),
+          ("gluc", [1, 2, 3], "glucose (1 normal - 3 well above)"),
+          ("smoke", [0, 1], "smokes (0 no, 1 yes)"),
+          ("active", [0, 1], "physically active (0 no, 1 yes)"),
+          ("alco", [0, 1], "drinks alcohol (0 no, 1 yes)")]
+sample = test.sample(3000, random_state=cardio.SEED)
+
+fig, axes = plt.subplots(2, 4, figsize=(13, 5.6), sharey=True)
+for ax, (feature, values, label) in zip(axes.flat, curves):
+    pdc = cardio.partial_dependence_curve(final, sample, feature, list(values))
+    ax.plot(pdc.index, pdc.values, "-o", color=NO_CVD, lw=2, ms=4)
+    ax.set(xlabel=label)
+    ax.yaxis.set_major_formatter(plt.matplotlib.ticker.PercentFormatter(1, decimals=0))
+for ax in axes[:, 0]:
+    ax.set_ylabel("average predicted risk")
+fig.suptitle("How the predicted risk moves with each factor (partial dependence, 3,000 test patients)",
+             x=0.01, ha="left", fontsize=12, fontweight="bold")
+fig.tight_layout()
+fig.savefig(FIGURES / "fig11_partial_dependence.png")
+plt.show()
+```
+
+### 8.5 A points score a doctor can use on paper
+
+If the best model gains only a little over simpler ones, the most useful result might be a
+transparent score. Here each factor is cut into clinical bands, a logistic regression is fitted on
+the bands, and its coefficients are rounded to whole points (one point = 0.1 in log-odds). The total
+then maps to a risk.
+
+```python
+points = cardio.PointsScore().fit(train, train["cardio"])
+card = points.table()
+card.set_index(["factor", "band"])
+```
+
+```python
+test_scores["Points score"] = points.predict_proba(test)
+boot_points = cardio.bootstrap(y_test, {"Points score": test_scores["Points score"], chosen: test_scores[chosen]},
+                               roc_auc_score)
+m = cardio.classification_metrics(y_test, test_scores["Points score"], 0.5)
+lo, hi = cardio.interval(boot_points["Points score"])
+d_lo, d_hi = cardio.interval(boot_points[chosen] - boot_points["Points score"])
+print(f"points score on the test patients: AUC {m['auc']:.3f} ({lo:.3f}-{hi:.3f}), accuracy {m['accuracy']:.1%}, "
+      f"sensitivity {m['sensitivity']:.1%}, specificity {m['specificity']:.1%}")
+print(f"{chosen} minus points score: AUC {roc_auc_score(y_test, test_scores[chosen]) - m['auc']:+.4f} "
+      f"(95% CI {d_lo:+.4f} to {d_hi:+.4f})")
+
+totals = points.total(test)
+observed = test.groupby(totals)["cardio"].agg(["mean", "size"])
+observed = observed[observed["size"] >= 50]
+fig, ax = plt.subplots(figsize=(6.6, 3.5))
+ax.scatter(observed.index, observed["mean"], s=np.sqrt(observed["size"]) * 2, color=NO_CVD, alpha=0.8,
+           label="observed share with CVD (test, ≥ 50 patients)")
+grid = np.arange(observed.index.min(), observed.index.max() + 1)
+ax.plot(grid, points.risk_by_total(grid), color=CVD, lw=2, label="risk the score assigns")
+ax.set(xlabel="total points", ylabel="share with CVD", title="Points score: total points against observed risk")
+ax.yaxis.set_major_formatter(plt.matplotlib.ticker.PercentFormatter(1, decimals=0))
+ax.legend(loc="upper left", fontsize=8)
+fig.savefig(FIGURES / "fig12_points_score.png")
+plt.show()
 ```

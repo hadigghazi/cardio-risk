@@ -25,8 +25,8 @@ can be trusted and explained.
 | 3-4 | Data, data quality and cleaning | done |
 | 5 | Exploratory analysis (training patients only) | done |
 | 6 | Feature engineering | done |
-| 7 | Models: baselines, LR, RF, gradient boosting, MLP; 5-fold CV (Q1) | code done; text after the VM results |
-| 8 | Final model on the test set; explanation; points score | |
+| 7 | Models: baselines, LR, RF, gradient boosting, MLP; 5-fold CV (Q1) | done |
+| 8 | Final model on the test set; explanation; points score | code done; text after the VM results |
 | 9 | Reliability: cleaning strategies, reproduced leakage, calibration, subgroups (Q2, Q3) | |
 | 10 | Using the model on a new patient | |
 | 11 | Conclusion and limitations | |

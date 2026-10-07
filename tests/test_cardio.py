@@ -186,3 +186,49 @@ def test_choose_model_prefers_the_simpler_of_tied_models(lr_auc, expected):
                           "auc": [lr_auc, 0.803, 0.790, 0.9], "auc_sd": [0.005] * 4},
                          index=["Logistic regression", "Gradient boosting", "Random forest", "Rule"])
     assert cardio.choose_model(table) == expected
+
+
+# ------------------------------------------------------------------------------------- evaluation
+
+def test_bootstrap_resamples_all_scores_together():
+    from sklearn.metrics import roc_auc_score
+    y = [0, 1] * 50
+    boot = cardio.bootstrap(y, {"perfect": y, "flipped": [1 - v for v in y]}, roc_auc_score, n=50)
+    assert len(boot) == 50 and (boot["perfect"] == 1).all() and (boot["flipped"] == 0).all()
+    lo, hi = cardio.interval(pd.Series(range(101)))
+    assert (lo, hi) == pytest.approx((2.5, 97.5))
+
+
+def test_screening_threshold_reaches_the_sensitivity():
+    import numpy as np
+    rng = np.random.default_rng(0)
+    y = rng.integers(0, 2, 1000)
+    risk = rng.random(1000) * 0.5 + 0.5 * y
+    t = cardio.screening_threshold(y, risk, 0.8)
+    assert (risk[y == 1] >= t).mean() >= 0.8
+
+
+def test_points_score_is_a_whole_point_scorecard_that_ranks_patients():
+    from sklearn.metrics import roc_auc_score
+    train = synthetic_patients(2000)
+    score = cardio.PointsScore().fit(train, train["cardio"])
+    table = score.table()
+    assert table["points"].dtype.kind == "i"
+    assert set(table["factor"]) == set(cardio.POINTS_LABELS.values())
+    sbp = table[table["factor"] == "Systolic pressure (mmHg)"]["points"].tolist()
+    assert sbp[0] == 0 and sbp[-1] > 5                       # the planted effect earns points
+    assert roc_auc_score(train["cardio"], score.predict_proba(train)) > 0.7
+    risks = score.risk_by_total([0, 10, 20])
+    assert risks.is_monotonic_increasing
+
+
+def test_explanations_find_the_planted_signal():
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+    train = synthetic_patients(2000)
+    model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000)).fit(train[cardio.FEATURES], train["cardio"])
+    imp = cardio.grouped_permutation_importance(model, train, n_repeats=3)
+    assert imp.index[0] == "blood pressure" and imp.loc["blood pressure", "auc drop"] > 0.1
+    pd_curve = cardio.partial_dependence_curve(model, train, "ap_hi", [110, 130, 150])
+    assert pd_curve.is_monotonic_increasing
