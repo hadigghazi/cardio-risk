@@ -490,6 +490,8 @@ POINTS_BANDS = {
 POINTS_LEVELS = {"cholesterol": {1: "normal", 2: "above normal", 3: "well above normal"},
                  "gluc": {1: "normal", 2: "above normal", 3: "well above normal"},
                  "smoke": {0: "no", 1: "yes"}, "alco": {0: "no", 1: "yes"}, "active": {0: "no", 1: "yes"}}
+# The clinical scorecard: the four factors whose direction is medically sound (Section 8.5)
+CLINICAL_FACTORS = ["age_years", "ap_hi", "bmi", "cholesterol"]
 POINTS_LABELS = {"age_years": "Age (years)", "ap_hi": "Systolic pressure (mmHg)", "bmi": "BMI (kg/m²)",
                  "cholesterol": "Cholesterol", "gluc": "Glucose", "smoke": "Smokes", "alco": "Drinks alcohol",
                  "active": "Physically active"}
@@ -746,7 +748,7 @@ def build_final(train: pd.DataFrame, model=None) -> dict:
     oof = out_of_fold(model, train)
     return {"model": model, "accuracy_cutoff": 0.5,
             "screening_cutoff": screening_threshold(train[TARGET], oof, SCREENING_SENSITIVITY),
-            "points": PointsScore().fit(train, train[TARGET]), "features": FEATURES}
+            "points": PointsScore(factors=CLINICAL_FACTORS).fit(train, train[TARGET]), "features": FEATURES}
 
 
 def save_final(bundle: dict, path: Path = MODEL_FILE) -> Path:
@@ -791,12 +793,16 @@ def assess(bundle: dict, row: pd.DataFrame) -> dict:
     points = bundle["points"]
     design = points._design(row)[points.points_.index].iloc[0]
     earned = points.points_[design == 1]
+    readable = {}
+    for column, value in earned.items():
+        factor = next(f for f in points.factors if column.startswith(f + "_"))
+        readable[f"{POINTS_LABELS[factor]}: {column[len(factor) + 1:]}"] = int(value)
     return {"risk": risk,
             "verdict": "cardiovascular disease likely" if risk >= bundle["accuracy_cutoff"] else "cardiovascular disease unlikely",
             "screening": "refer for examination" if risk >= bundle["screening_cutoff"] else "no referral",
             "screening_cutoff": bundle["screening_cutoff"],
             "points": int(earned.sum()), "points_risk": float(points.predict_proba(row)[0]),
-            "points_breakdown": {k: int(v) for k, v in earned.items() if v != 0}}
+            "points_breakdown": {k: v for k, v in readable.items() if v != 0}}
 
 
 # --------------------------------------------------------------------------------------------- CLI
@@ -844,13 +850,16 @@ def _cmd_train(args: argparse.Namespace) -> None:
 
 
 def _cmd_predict(args: argparse.Namespace) -> None:
-    row = patient(args.age, args.sex, args.height, args.weight, args.systolic, args.diastolic,
-                  args.cholesterol, args.glucose, args.smoke, args.alcohol, args.active)
+    try:
+        row = patient(args.age, args.sex, args.height, args.weight, args.systolic, args.diastolic,
+                      args.cholesterol, args.glucose, args.smoke, args.alcohol, args.active)
+    except ValueError as e:
+        raise SystemExit(f"rejected: {e}")
     result = assess(load_final(), row)
     print(f"predicted risk of cardiovascular disease: {result['risk']:.0%}")
     print(f"verdict: {result['verdict']}")
     print(f"screening (cut-off {result['screening_cutoff']:.2f}): {result['screening']}")
-    print(f"points score: {result['points']} points, risk {result['points_risk']:.0%}")
+    print(f"clinical points score: {result['points']} points, risk {result['points_risk']:.0%}")
     for k, v in result["points_breakdown"].items():
         print(f"   {v:+d}  {k}")
 

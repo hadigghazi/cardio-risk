@@ -909,7 +909,7 @@ plt.show()
 ```
 
 ```python
-clinical = cardio.PointsScore(factors=["age_years", "ap_hi", "bmi", "cholesterol"]).fit(train, train["cardio"])
+clinical = cardio.PointsScore(factors=cardio.CLINICAL_FACTORS).fit(train, train["cardio"])
 test_scores["Points score (clinical, 4 factors)"] = clinical.predict_proba(test)
 for name in ["Points score", "Points score (clinical, 4 factors)", "Logistic regression", chosen]:
     m = cardio.classification_metrics(y_test, test_scores[name], 0.5)
@@ -1109,8 +1109,9 @@ pd.DataFrame(rows).set_index("patient").style.format({"predicted risk": "{:.0%}"
 
 The three invented patients get the answers a clinician would expect. The 62-year-old man with
 stage 2 hypertension, obesity and high cholesterol is at 87%. The young woman with normal results is
-at 14%. The 55-year-old woman in between is at 59%, so she is referred at either cut-off. The
-scorecard agrees with the model on the order of all three.
+at 14%. The 55-year-old woman in between is at 59%, so she is referred at either cut-off. The saved
+tool uses the four-factor clinical scorecard (Section 8.5), and it ranks the three patients in the
+same order as the model.
 
 ```python
 try:
