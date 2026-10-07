@@ -7,7 +7,7 @@
 ## 1. Introduction
 
 Cardiovascular diseases (CVDs) kill an estimated 17.9 million people every year, more than any other
-cause. Many of these deaths could be delayed if patients at risk were identified early. Doctors find
+cause [1]. Many of these deaths could be delayed if patients at risk were identified early. Doctors find
 this hard to do reliably by hand: no single measurement settles the question, and the risk builds up
 from many small factors.
 
@@ -16,16 +16,17 @@ sex, height, weight, blood pressure, cholesterol, glucose, and three lifestyle q
 whether a patient has a cardiovascular disease. Then evaluate how well it does this. The final model
 is delivered with a function that gives a verdict and a risk for a new patient (Section 10).
 
-The dataset has 70,000 patients, which is large for medical tabular data, but it is not clean. Some
+The dataset [2] has 70,000 patients, which is large for medical tabular data, but it is not clean. Some
 recorded blood pressures are impossible, such as −150 or 16,020 mmHg. The signal is also modest:
-careful studies of this dataset report about 73% accuracy. Other published papers claim 86–94% on the
-same data, which is hard to reconcile with that. Three questions therefore guide the evaluation, so
+careful studies of this dataset report about 73% accuracy [5]. Other published papers report 88% [6]
+and even 94.5% [7] on the same data, which is hard to reconcile with that. Three questions therefore guide the evaluation, so
 that the final model comes with an honest account of what it can do:
 
 - **Q1. How much does machine learning improve on what a doctor already has?** The models are
   compared with two clinical baselines. The first is a blood-pressure threshold from the ACC/AHA 2017
-  guideline: systolic pressure of at least 130 mmHg, stage 1 hypertension. The second is the
-  Framingham office-based risk score, which uses age, sex, BMI, blood pressure, smoking and diabetes.
+  guideline [3]: systolic pressure of at least 130 mmHg, stage 1 hypertension. The second is the
+  Framingham office-based risk score [4], which uses age, sex, BMI, blood pressure, smoking and
+  diabetes.
 - **Q2. How much do data-handling choices change the measured performance?** This covers the
   cleaning strategy, and the common mistakes that let information from the test set leak into
   training. Reproducing those mistakes shows how accuracies far above 73% can be produced.
@@ -383,7 +384,7 @@ rate than non-smokers of the same age. The likeliest explanation lies in how the
 not in biology. The diagnosis and the answers were recorded **at the same examination**, so a patient
 who already has heart disease has usually been told to quit. Such a patient answers "no" to smoking,
 which moves diseased former smokers into the non-smoker group. This effect has a name in
-epidemiology: the "sick quitter".
+epidemiology: the "sick quitter" [8].
 
 This has two consequences for the rest of the study:
 
@@ -485,7 +486,7 @@ Two points about these features:
 ### 7.1 What is compared
 
 Every candidate is evaluated with 5-fold cross-validation on the training patients, using the same
-five folds. The test patients are not touched in this section.
+five folds. All models are implemented with scikit-learn [12]. The test patients are not touched in this section.
 
 | Candidate | Type | What it uses | Settings searched |
 |---|---|---|---|
@@ -718,6 +719,11 @@ print(f"that is {round((at_rule - rule['sensitivity']) * n_sick):,} more of the 
       f"with the same number of healthy patients flagged")
 ```
 
+At the rule's own operating point, the model finds 66.2% of the diseased patients instead of 61.8%:
+301 more of the 6,785 diseased test patients, with no extra healthy patients flagged. This is the
+most concrete form of the answer to Q1. The gain is real but modest, about one more patient detected
+for every 23 diseased patients examined.
+
 ### 8.2 Are the differences real?
 
 The same bootstrap resamples score every model, so each AUC difference can be given its own
@@ -911,6 +917,13 @@ for name in ["Points score", "Points score (clinical, 4 factors)", "Logistic reg
 clinical.table().set_index(["factor", "band"]).T
 ```
 
+**Dropping the four questionable factors costs almost nothing.** The four-factor clinical scorecard
+reaches an AUC of 0.793 and 72.3% accuracy: exactly logistic regression on all fifteen features, and
+0.011 AUC below gradient boosting. A doctor with a pen can add up four numbers (age, systolic
+pressure, BMI, cholesterol) and get within about one point of accuracy of the best machine-learning
+model. This is in line with Rudin's argument that for tabular problems like this one, an
+interpretable model is often nearly as accurate as a black box [9].
+
 ## 9. Reliability
 
 Section 8 measured how well the model works. This section asks how far those numbers can be
@@ -930,9 +943,24 @@ strategies = cardio.strategy_comparison({"Gradient boosting": final, "Logistic r
  .reindex(list(cardio.STRATEGIES)).style.format("{:.4f}"))
 ```
 
+The answer depends on the model, exactly as Section 4.3 predicted:
+
+- **Gradient boosting does not care.** Its test AUC is 0.804 whether it is trained on the raw,
+  dropped or repaired data. Trees split on the order of values, so a pressure of 16,020 mmHg simply
+  lands in the top branch with every other high reading.
+- **Logistic regression is hurt by the raw data.** Its AUC falls from 0.793 to 0.776. A handful of
+  absurd values pull its single straight-line coefficient for blood pressure towards zero, which
+  drowns out the strongest predictor.
+- **Repairing and dropping give the same result.** The 1,257 repaired records are under 2% of the
+  data, too few to change what the model learns. Repair keeps more patients, but its value lies in
+  not discarding real people rather than in accuracy.
+
+The practical lesson: cleaning is essential for linear models and for any analysis that reads
+coefficients or correlations (Section 4.3), even when a tree model would have survived without it.
+
 ### 9.2 How mistakes inflate reported accuracy
 
-Papers on this dataset report accuracies from 73% to 94%. This experiment reproduces three
+Papers on this dataset report accuracies from 73% [5] to 94.5% [7]. This experiment reproduces three
 mistakes common in published machine-learning work on medical data and measures the accuracy each
 one would let a study report. Each mistake is shown next to the honest figure for the same model.
 These pipelines are wrong on purpose, and none of them feeds into the model chosen above. Which
@@ -945,6 +973,28 @@ leakage = cardio.leakage_experiments(train, test, correct_acc)
 print(f"leakage experiments: {time.time() - t0:.0f} s")
 leakage.style.format({"reported accuracy": "{:.1%}"}).hide(axis="index")
 ```
+
+The same data can "report" anything from 64% to 99.9% accuracy, depending on how the evaluation is
+set up:
+
+1. **Accuracy measured on the training patients.** A forest of fully grown trees memorises its
+   training patients and scores 99.9% on them, against 71.0% on patients it has never seen. Any
+   figure that does not come from held-out patients says nothing about the model.
+2. **SMOTE before the split** [10]. Synthetic patients are interpolated between real neighbours,
+   so after a random split most test patients have a near-twin in the training set. A one-nearest-
+   neighbour classifier then "reaches" 85.3% and the forest 86.7%: inflated by 16-21 points. These
+   accuracies are close to those reported in [6]. Applied correctly, to the training patients only,
+   SMOTE does nothing useful here (the classes are already balanced) and both models fall to 64-71%.
+   The same mistake explained a published 99% accuracy on another cardiovascular dataset; once it was
+   corrected, accuracy fell to 77% [11].
+3. **Trying many random splits and reporting the best one.** This is the mildest mistake: the best
+   of 50 splits is 73.4%, against 72.8% for the median split. With 14,000 test patients the luck of
+   the split is worth less than one point. It matters far more in small datasets.
+
+None of this shows what the authors of [6] or [7] actually did; their papers would have to be
+reproduced to know. What it does show is that **an accuracy far above 74% on this dataset should be
+read as a sign of leakage until the pipeline proves otherwise**: the learning curve in Section 7.4
+gives no reason to expect a model to gain 15 or 20 points.
 
 ### 9.3 Can the predicted risks be taken at face value?
 
@@ -970,6 +1020,13 @@ fig.savefig(FIGURES / "fig13_calibration.png")
 plt.show()
 ```
 
+**Gradient boosting's risks can be read as risks.** Its ten points lie on the diagonal: patients
+given about 20% have CVD about 20% of the time, and patients given 80% about 80% of the time. It also
+has the lowest Brier score (0.179). Logistic regression bends around the diagonal: it overstates low
+risks and understates the risk around 60-70%, the S-shaped error of a straight line forced through
+the switch-like effect of blood pressure (Section 8.4). The points score is close to calibrated, with
+a small excess of observed cases in the middle range.
+
 ### 9.4 Does the model work equally well for everyone?
 
 ```python
@@ -977,6 +1034,16 @@ subgroups = cardio.subgroup_table(test, test_scores[chosen])
 subgroups.style.format({"patients": "{:,}", "share with CVD": "{:.1%}", "mean predicted risk": "{:.1%}",
                         "AUC": "{:.3f}", "sensitivity": "{:.1%}", "specificity": "{:.1%}"})
 ```
+
+- **Women and men are served equally.** Their AUCs (0.803 and 0.808) and error rates are close, and
+  in both groups the mean predicted risk matches the observed share within 1 point.
+- **Age is different.** Discrimination falls with age, from an AUC of 0.835 below 50 to 0.718 at 60
+  and over. Among older patients most have high blood pressure and most have CVD, so the main signal
+  separates them less well. The risks remain calibrated in every age group (mean predicted vs
+  observed within 1.5 points). But at the 0.5 cut-off the model flags 88% of diseased patients over 60
+  while clearing only 35% of the healthy ones; below 50 it is the reverse (59% and 91%). A single
+  cut-off does not suit every age. A deployed tool could use age-specific cut-offs, or report the risk
+  itself and leave the threshold to the clinician.
 
 ### 9.5 What the numbers mean outside this dataset
 
@@ -995,6 +1062,13 @@ ppv = pd.DataFrame({f"{label} (sens {m['sensitivity']:.0%}, spec {m['specificity
 ppv.index.name = "share of patients with CVD"
 ppv.style.format("{:.0%}")
 ```
+
+In this dataset 76% of the patients the model flags really have CVD. In a check-up population where
+one patient in five has CVD, the same model, with the same sensitivity and specificity, would be right
+about only 44% of the patients it flags (36% at the screening cut-off). The model is still useful
+there, because it concentrates the disease: 44% is more than twice the 20% base rate. But its verdict
+has to be read as "worth a closer look", not as a diagnosis. And before its *risks* could be used in
+such a population, it would have to be recalibrated to that population's prevalence.
 
 ## 10. Using the model
 
@@ -1033,6 +1107,11 @@ for label, values in examples.items():
 pd.DataFrame(rows).set_index("patient").style.format({"predicted risk": "{:.0%}", "risk from points": "{:.0%}"})
 ```
 
+The three invented patients get the answers a clinician would expect. The 62-year-old man with
+stage 2 hypertension, obesity and high cholesterol is at 87%. The young woman with normal results is
+at 14%. The 55-year-old woman in between is at 59%, so she is referred at either cut-off. The
+scorecard agrees with the model on the order of all three.
+
 ```python
 try:
     cardio.patient(age=50, sex="male", height=175, weight=80, systolic=1400, diastolic=90)
@@ -1045,3 +1124,87 @@ The same works from a terminal, after `python cardio.py train`:
 ```
 $ python cardio.py predict --age 62 --sex male --height 172 --weight 98 --systolic 165 --diastolic 100 --cholesterol 3
 ```
+
+## 11. Conclusion
+
+**Objective met.** A gradient-boosting model detects cardiovascular disease from the eleven values of
+a routine examination. On 13,722 patients it never saw, it reaches an AUC of 0.804 (95% CI
+0.797-0.811) and 73.6% accuracy. Its risks are well calibrated, and it works equally well for women
+and men. `cardio.py` packages it as a tool that checks a new examination, rejects impossible values,
+and returns a risk, a verdict and a points breakdown.
+
+**Q1. What machine learning adds over what a doctor already has: something real, but small.**
+
+- **Over the guideline rule.** The model beats systolic pressure ≥ 130 mmHg by 2.3 points of
+  accuracy. At the rule's specificity, it detects 301 more of 6,785 diseased patients.
+- **Between the models.** The three flexible models are tied, and logistic regression is only 0.012
+  AUC behind.
+- **The scorecard.** A four-factor paper score comes within 0.011 AUC of the best model.
+- **Why the gain is small.** The learning curve is flat, so the ceiling of about 0.80 AUC (73-74%
+  accuracy) is set by what the examination records, not by the algorithm or the amount of data.
+- **The Framingham score.** As published, it ranks these patients worse than blood pressure alone,
+  and it only becomes competitive once refitted to them.
+
+**Q2. Data handling decides more than the algorithm does.**
+
+- **Cleaning.** Fewer than 2% of records hide the strongest predictor from any linear analysis, and
+  cost logistic regression 0.017 AUC. Tree models survive the dirty data, and repairing the records
+  is as good as dropping them.
+- **Leakage.** Common pipeline mistakes turn the same data into reported accuracies of 85-100%. Claims
+  far above 74% on this dataset should be treated as signs of leakage until shown otherwise.
+
+**Q3. The predictions can be trusted, within limits.**
+
+- **Calibration.** The risks are calibrated overall, for both sexes and in every age group.
+- **What drives them.** The explanations are dominated by blood pressure, age and cholesterol, in the
+  direction medicine expects.
+- **Weak spots.** Discrimination is weaker in patients over 60. The lifestyle answers carry
+  reverse-caused associations that must not be read as effects.
+
+### Limitations
+
+1. **Detection, not prediction.** Diagnosis and features come from the same examination. The model
+   recognises existing disease. It cannot forecast who will develop CVD.
+2. **Unknown provenance and outcome definition.** The dataset's source and the exact meaning of
+   "cardiovascular disease" are undocumented. If the label includes diagnosed hypertension, part of
+   blood pressure's predictive power is circular.
+3. **Treatment is not recorded.** Medication lowers blood pressure and cholesterol in diagnosed
+   patients, and diagnosis changes habits. Both weaken or reverse associations (Section 5.2), and
+   neither can be corrected for here.
+4. **A 50/50 sample.** Predictive values and absolute risks apply to this sample. Another population
+   needs recalibration (Section 9.5).
+5. **One dataset.** All results come from one source with one train/test split. The split is large
+   and every estimate carries a confidence interval, but there is no external validation.
+6. **Coarse measurements.** Cholesterol and glucose come in three categories, and diabetes had to be
+   approximated for the Framingham score.
+
+The next step for this model would be validation on data from a known clinical source, with
+recorded treatment and, ideally, outcomes followed over time. Those are what would turn a detector of
+existing disease into a tool for prevention.
+
+## References
+
+1. World Health Organization. *Cardiovascular diseases (CVDs)*, fact sheet.
+2. S. Ulianova. *Cardiovascular Disease dataset*. Kaggle, 2019.
+3. P. K. Whelton et al. 2017 ACC/AHA guideline for the prevention, detection, evaluation, and
+   management of high blood pressure in adults. *Hypertension*, 71(6):e13-e115, 2018.
+4. R. B. D'Agostino Sr et al. General cardiovascular risk profile for use in primary care: the
+   Framingham Heart Study. *Circulation*, 117(6):743-753, 2008.
+5. R. S. Ramesh, R. T. S. Udupa, Monisha J and Kushi K. K. S. Cardiovascular disease prediction using
+   machine learning: a comparative analysis. arXiv:2507.21898, 2025.
+6. D. Y. Omkari and K. Shaik. An integrated two-layered voting (TLV) framework for coronary artery
+   disease prediction using machine learning classifiers. *IEEE Access*, 2024.
+   doi:10.1109/ACCESS.2024.3389707.
+7. A. R. Zafar et al. Cardiovascular diagnostic detection using multilayer perceptron approach.
+   *Systems and Soft Computing*, 2026. doi:10.1016/j.sasc.2026.200490.
+8. A. G. Shaper, G. Wannamethee and M. Walker. Alcohol and mortality in British men: explaining the
+   U-shaped curve. *The Lancet*, 2(8623):1267-1273, 1988.
+9. C. Rudin. Stop explaining black box machine learning models for high stakes decisions and use
+   interpretable models instead. *Nature Machine Intelligence*, 1:206-215, 2019.
+10. N. V. Chawla, K. W. Bowyer, L. O. Hall and W. P. Kegelmeyer. SMOTE: synthetic minority
+    over-sampling technique. *Journal of Artificial Intelligence Research*, 16:321-357, 2002.
+11. Eltawil et al. Comment on Iacobescu et al. "Evaluating binary classifiers for cardiovascular
+    disease prediction: enhancing early diagnostic capabilities". *Journal of Cardiovascular
+    Development and Disease*, 13(1):46, 2026. doi:10.3390/jcdd13010046.
+12. F. Pedregosa et al. Scikit-learn: machine learning in Python. *Journal of Machine Learning
+    Research*, 12:2825-2830, 2011.
