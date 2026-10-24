@@ -5,10 +5,10 @@ The brief is in `brief/`. Deliverables: the report notebook, the Python file and
 
 | File | What it is |
 |---|---|
-| `cardio.py` | all project code: loading, cleaning, features, (later) models and evaluation; also a CLI |
+| `cardio.py` | single source of all project code; `build_report.py` copies its sections into the notebook; also a CLI |
 | `report.md` | source of the report; `build_report.py` turns it into `outputs/report.ipynb` and executes it |
 | `tests/` | unit tests for the cleaning rules and features |
-| `.github/workflows/ci.yml` | every push: tests on GitHub's runner; on main, then the report is built and run on dblp-vm (artifact `outputs-<run id>`) |
+| `.github/workflows/ci.yml` | every push: tests on GitHub's runner (the report runs on demand, see below) |
 | `.github/workflows/vm.yml` | runs jobs on dblp-vm over SSH (secrets VM_HOST, VM_USER, VM_SSH_KEY, as in the dblp project), in a capped container; by hand or called by CI |
 
 ## Report plan
@@ -41,8 +41,9 @@ model first. `presentation/script.md` is the spoken script (~8 minutes at 140 wo
 
 ## Submission
 
-The zip holds `report.ipynb` (executed on the VM), `cardio.py`, `Cardio-Risk.pptx`, plus
-`data/cardio.csv` and `requirements.txt` so the notebook can be re-run.
+The zip holds `report.ipynb` (executed on the VM, all code inside it), `Cardio-Risk.pptx`, plus
+`data/cardio.csv` and `requirements.txt` so the notebook can be re-run. No `.py` file: the brief accepts
+either format, and the notebook is self-contained.
 
 ## Running
 

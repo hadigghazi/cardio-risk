@@ -2,7 +2,7 @@
 
 A complete account of the project: what is in the submission, what every file does, what was done
 and in what order, why each decision was taken, and the concepts you need to explain it. Every number
-here comes from the final executed report (VM run 37663212944).
+here comes from the final executed report (VM run 40122319735).
 
 ---
 
@@ -18,7 +18,7 @@ disease (CVD).
   machine-learning models. The final model is **gradient boosting: 73.6% accuracy and ROC AUC 0.804
   on 13,722 patients it never saw.** A doctor's simple rule (systolic pressure ≥ 130 mmHg) gets
   71.3%.
-- **The tool.** The model is packaged as a command-line tool that assesses a new patient.
+- **The tool.** The last section of the notebook packages the model as a check of a new patient.
 - **The honest framing.** The report also shows what the model adds, how data handling changes the
   results (including how some published papers could claim 88–94.5%), and how far its predictions can
   be trusted.
@@ -27,24 +27,25 @@ disease (CVD).
 
 ## 2. The submission zip, file by file
 
-`submission/Hadi-Ghazi_Patient-Sickness-Prediction.zip` (5 MB):
+`submission/Hadi-Ghazi_Patient-Sickness-Prediction.zip`:
 
 | File | Required by the brief? | What it is |
 |---|---|---|
-| `report.ipynb` | yes: "project report, as a .ipynb file" | the full report, already executed: text, code, tables, 13 figures |
-| `cardio.py` | yes: "your Python file (.py)" | all the project's code, plus a command-line tool |
+| `report.ipynb` | yes: the report "as a .ipynb file" | the full report with **all** the code inside it, already executed: text, code, tables, 13 figures |
 | `Cardio-Risk.pptx` | yes: "a final presentation" | 15 slides + 3 backup, speaker notes on every slide |
 | `data/cardio.csv` | no, added | the dataset, so the notebook can be re-run |
 | `requirements.txt` | no, added | exact library versions, so the results reproduce |
 
-The notebook and `cardio.py` must sit in the same folder (the notebook does `import cardio`), and the
-data must be at `data/cardio.csv`. The zip is laid out that way.
+**Why there is no `.py` file.** The brief lists ".ipynb" and ".py" because a project can be
+delivered either way, and we chose the notebook. Everything is in it: every function, model and
+check appears as visible code in the section where it is first used. The notebook needs only
+`data/cardio.csv` next to it, or in a parent folder.
 
 ### 2.1 `report.ipynb`: the report
 
-Read it top to bottom; it is written as a paper with code inside it. It has 79 cells, 41 of them
+Read it top to bottom; it is written as a paper with code inside it. It has 91 cells, 52 of them
 code, all executed with outputs saved, and 13 embedded figures. It was executed on the VM in a Docker
-container in 583 seconds.
+container in 536 seconds.
 
 **§1 Introduction.**
 
@@ -239,49 +240,44 @@ It also shows that an impossible reading (1400 mmHg) is rejected.
 
 It ends with 12 references.
 
-### 2.2 `cardio.py`: all the code, and a tool
+### 2.2 The code inside the notebook
 
-One file, about 900 lines, in sections. The notebook imports it, so the notebook and the command
-line always run the same code.
+The notebook contains all the code, as 52 code cells of about 1,200 lines. The functions are
+defined in the section where they are first used, and the cells after them call them by name, for
+example `clean(raw, "repair")` or `compare_models(train)`:
 
-| Section | Main functions | What they do |
+| Code cell (where in the notebook) | Main functions | What they do |
 |---|---|---|
-| Constants | `BOUNDS`, `FEATURES`, `SEED=42`, `TEST_SIZE=0.2` | the plausibility bounds, the 15 model features, the fixed split |
-| Loading | `load`, `deduplicate` | read the CSV; drop exact duplicates (ignoring `id`) |
-| Data quality | `audit`, `repair_pressure`, `repair`, `clean`, `cleaning_summary` | flag implausible values; repair one blood pressure (sign → cmHg → extra digits), swap transposed pairs, log every change; build the raw/drop/repair datasets |
-| Features | `prepare`, `bp_stage`, `add_features`, `dataset`, `split_ids`, `train_test` | age in years, sex as `male`; BMI, pulse pressure, mean arterial pressure, ACC/AHA stage; the fixed patient-id split shared by every strategy |
-| Clinical baselines | `framingham_risk`, `framingham_design`, `diabetes_proxy` | the published Framingham 2008 equations (coefficients checked against two sources); the same terms per sex for refitting; glucose "well above normal" as the diabetes stand-in |
-| Models | `model_specs`, `compare_models`, `choose_model`, `feature_set_comparison`, `learning_curve_auc` | the five models and their grids; cross-validation of baselines and models on the same folds; the one-standard-error choice; the derived-feature check; the learning curve |
-| Evaluation | `classification_metrics`, `accuracy_threshold`, `bootstrap`, `interval`, `out_of_fold`, `screening_threshold` | AUC, accuracy, sensitivity, specificity; cut-offs chosen on training data; paired bootstrap confidence intervals |
-| Points score | `PointsScore`, `CLINICAL_FACTORS` | bands the factors, fits a logistic regression, rounds coefficients to whole points (1 point = 0.1 log-odds), maps the total back to a risk; the 4-factor clinical version |
-| Explanation | `grouped_permutation_importance`, `partial_dependence_curve` | the AUC drop when a group of related features is scrambled together; the average risk as one factor varies, with derived features recomputed |
-| Reliability | `strategy_comparison`, `smote`, `leakage_experiments`, `subgroup_table`, `ppv_at_prevalence` | the three cleaning strategies on one test set; a minimal SMOTE written out; the three deliberate mistakes; metrics by sex and age; predictive value at other prevalences |
-| Using the model | `final_estimator`, `build_final`, `save_final`, `load_final`, `patient`, `assess` | fit and save the model with both cut-offs and the clinical card; validate a new examination with the cleaning rules; return the risk, verdict, screening decision and points breakdown |
-| Command line | `main` and `_cmd_*` | four commands, below |
+| Setup (§1) | `BOUNDS`, `FEATURES`, `SEED=42`, `TEST_SIZE=0.2` | the plausibility bounds, the 15 model features, the fixed split |
+| Loading (§3) | `load`, `deduplicate` | read the CSV; drop exact duplicates (ignoring `id`) |
+| Data quality (§4.1) | `audit`, `repair_pressure`, `repair`, `clean`, `cleaning_summary` | flag implausible values; repair one blood pressure (sign → cmHg → extra digits), swap transposed pairs, log every change; build the raw/drop/repair datasets |
+| Features (§5) | `prepare`, `bp_stage`, `add_features`, `dataset`, `split_ids`, `train_test` | age in years, sex as `male`; BMI, pulse pressure, mean arterial pressure, ACC/AHA stage; the fixed patient-id split shared by every strategy |
+| Clinical baselines (§7.2) | `framingham_risk`, `framingham_design`, `diabetes_proxy` | the published Framingham 2008 equations (coefficients checked against two sources); the same terms per sex for refitting; glucose "well above normal" as the diabetes stand-in |
+| Models (§7.2) | `model_specs`, `compare_models`, `choose_model`, `feature_set_comparison`, `learning_curve_auc` | the five models and their grids; cross-validation of baselines and models on the same folds; the one-standard-error choice; the derived-feature check; the learning curve |
+| Evaluation (§8.1) | `classification_metrics`, `accuracy_threshold`, `bootstrap`, `interval`, `out_of_fold`, `screening_threshold` | AUC, accuracy, sensitivity, specificity; cut-offs chosen on training data; paired bootstrap confidence intervals |
+| Points score (§8.5) | `PointsScore`, `CLINICAL_FACTORS` | bands the factors, fits a logistic regression, rounds coefficients to whole points (1 point = 0.1 log-odds), maps the total back to a risk; the 4-factor clinical version |
+| Explanation (§8.4) | `grouped_permutation_importance`, `partial_dependence_curve` | the AUC drop when a group of related features is scrambled together; the average risk as one factor varies, with derived features recomputed |
+| Reliability (§9.1) | `strategy_comparison`, `smote`, `leakage_experiments`, `subgroup_table`, `ppv_at_prevalence` | the three cleaning strategies on one test set; a minimal SMOTE written out; the three deliberate mistakes; metrics by sex and age; predictive value at other prevalences |
+| Using the model (§10) | `final_estimator`, `build_final`, `save_final`, `load_final`, `patient`, `assess` | fit and save the model with both cut-offs and the clinical card; validate a new examination with the cleaning rules; return the risk, verdict, screening decision and points breakdown |
 
-Commands (run from the folder that holds `data/cardio.csv`):
+Checking a new patient takes two lines (Section 10):
 
-```
-python cardio.py clean     # data-quality audit and the three cleaning strategies
-python cardio.py compare   # cross-validated comparison of baselines and models (a few minutes)
-python cardio.py train     # fit the final model, save outputs/model.joblib
-python cardio.py predict --age 62 --sex male --height 172 --weight 98 --systolic 165 --diastolic 100 --cholesterol 3
+```python
+bundle = load_final()     # the saved model, both cut-offs and the clinical scorecard
+assess(bundle, patient(age=62, sex="male", height=172, weight=98, systolic=165, diastolic=100, cholesterol=3))
 ```
 
-`predict` prints:
+This returns a risk of 87%, the verdict "cardiovascular disease likely", "refer for examination" at
+the 0.38 screening cut-off, and 50 clinical points (+11 age 60+, +27 systolic 160+, +3 BMI 30–34.9,
++9 cholesterol well above normal). An impossible reading such as `systolic=1400` raises
+`ValueError: implausible examination values: ap_hi out of range`.
 
-```
-predicted risk of cardiovascular disease: 87%
-verdict: cardiovascular disease likely
-screening (cut-off 0.38): refer for examination
-clinical points score: 50 points, risk 95%
-   +11  Age (years): 60+
-   +27  Systolic pressure (mmHg): 160+
-   +3   BMI (kg/m²): 30-34.9
-   +9   Cholesterol: well above normal
-```
-
-With an impossible input it prints `rejected: implausible examination values: ap_hi out of range`.
+**How the notebook is built.** In the repository the code lives in one file, `cardio.py`, which the
+unit tests and the presentation build also use. `build_report.py` copies each section of that file
+into the notebook, at the markers in `report.md`. The notebook is then executed in a folder that does
+*not* contain `cardio.py`, so any hidden dependency on it would fail. This keeps one copy of the
+code while the submitted notebook stands alone. `cardio.py` also still offers a command line
+(`python cardio.py predict ...`), but that is not part of the submission.
 
 ### 2.3 `Cardio-Risk.pptx`: the presentation
 
@@ -308,7 +304,7 @@ A 10-minute talk: 15 main slides plus 3 backup slides.
 | 10 | A score a doctor can add up | the 4-factor scorecard and points → risk |
 | 11 | How 90% accuracy happens | the leakage bars; the published 88% and 94.5% marked |
 | 12 | Can the predictions be trusted? | calibration; sexes; over 60; 44% at 20% prevalence |
-| 13 | The deliverable: a working tool | the real `predict` output and a rejection |
+| 13 | Checking a new patient | the notebook call and its real output; a rejected reading |
 | 14 | Conclusions | Q1–Q3 answers and limitations |
 | 15 | Thank you | questions; template credit |
 | 16–18 | Backup | full test table; cleaning strategies; subgroups |
@@ -437,7 +433,7 @@ a one-line rejection for impossible values instead of a crash.
 - **Format.** You chose PowerPoint, about 10 minutes.
 - **How it's built.** The build script follows your earlier decks: template layouts, the template's
   own medical icons, Morph, and notes timed at 140 words a minute.
-- **Numbers that can't drift.** The build reads the scorecard and the command-line example from the
+- **Numbers that can't drift.** The build reads the scorecard and the patient example from the
   saved model. It refuses an outdated model unless run with `--draft`.
 - **QA.** Every slide was rendered through PowerPoint and inspected, and the obvious problems were
   fixed: two titles that wrapped, overlapping labels on the leakage slide, a chart too small to read
@@ -454,7 +450,18 @@ a one-line rejection for impossible values instead of a crash.
    pinned.
 3. **A rough command-line tool.** It printed raw column names and crashed on bad input; both fixed.
 
-### Step 13: packaging
+### Step 13: one notebook instead of a notebook and a .py file
+
+You confirmed the brief means *either* format, so we submit the notebook alone. Every section of
+`cardio.py` now appears as code inside the notebook, and the command line was dropped from the
+submission. Section 10 and slide 13 now show the check inside the notebook.
+
+At the same time, the account's GitHub Actions allowance ran out ("spending limit"), so no job could
+start. Following the rule from the groundtruth project, CI now runs only the tests on push, and the
+report runs on demand. You then made the repository public, which makes Actions free, and the
+notebook was re-run on the VM.
+
+### Step 14: packaging
 
 The final VM run's notebook was checked: 79 cells, 41 code cells executed, 13 figures, 0 errors.
 Its test results match the run the deck was built from. It was committed to the repo, and the zip
@@ -546,6 +553,10 @@ over 60, and a single cut-off doesn't suit every age: that is reported as a limi
 **Can it predict who will get heart disease?** No. Diagnosis and features come from the same visit,
 so it detects existing disease. Prediction would need patients followed over time.
 
+**Why is there no .py file?** The brief accepts the work as a notebook or as a Python file; we chose
+the notebook. It contains all the code (52 code cells), so it runs on its own with just the data
+file.
+
 **Why run it on a VM?** To keep the computation reproducible and off the laptop. Every result in the
 notebook comes from a Docker container on dblp-vm, built from a specific commit. CI runs the tests on
 every push and the full report on pushes to main.
@@ -556,12 +567,13 @@ every push and the full report on pushes to main.
 
 | Path | Purpose |
 |---|---|
+| `cardio.py` | the single source of all the code; the notebook build copies it in section by section; also a command line |
 | `report.md` | the source of the report; `build_report.py` turns it into the notebook and executes it |
-| `build_report.py` | Markdown → notebook converter and executor; fails if figures are missing |
-| `tests/test_cardio.py` | 43 unit tests (cleaning rules, features, Framingham, metrics, scorecard, tool) |
+| `build_report.py` | Markdown → notebook converter: copies in the code sections, executes without `cardio.py`, fails if figures are missing |
+| `tests/` | 46 unit tests (cleaning rules, features, Framingham, metrics, scorecard, patient check, notebook build) |
 | `Dockerfile`, `.dockerignore` | the reproducible environment |
-| `.github/workflows/ci.yml` | tests on every push; the report on the VM for pushes to main |
-| `.github/workflows/vm.yml` | run, collect, log, stop or status for jobs on dblp-vm |
+| `.github/workflows/ci.yml` | tests on every push (about a minute) |
+| `.github/workflows/vm.yml` | run the report on dblp-vm on demand; also collect, log, stop, status |
 | `presentation/` | `build.py`, the template, icons, figures, `script.md`, the deck |
 | `brief/` | the two course documents |
 | `outputs/` (not committed) | local copies of VM outputs, including `model.joblib` |
