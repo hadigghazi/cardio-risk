@@ -761,7 +761,7 @@ def save_final(bundle: dict, path: Path = MODEL_FILE) -> Path:
 def load_final(path: Path = MODEL_FILE) -> dict:
     import joblib
     if not Path(path).exists():
-        raise FileNotFoundError(f"{path} not found: run `python cardio.py train` first")
+        raise FileNotFoundError(f"{path} not found: fit and save the final model first (build_final, save_final)")
     return joblib.load(path)
 
 

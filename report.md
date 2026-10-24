@@ -40,19 +40,14 @@ Section 7 trains and compares the models (Q1), Section 8 evaluates the chosen mo
 and explains it, and Section 9 runs the reliability checks (Q2, Q3). Section 10 shows the model in
 use, and Section 11 concludes, with the study's limitations.
 
+All the project's code is in this notebook, each part placed where it is first needed. The first
+cell holds the libraries, the file locations and the constants used throughout. The notebook finds
+its folder by looking for `data/cardio.csv`.
+
+<!-- code: setup -->
+
 ```python
-import sys
-from pathlib import Path
-
-# the notebook may run from the project folder or from outputs/; cardio.py sits in the project folder
-ROOT = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "cardio.py").exists())
-sys.path.insert(0, str(ROOT))
-
 import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-
-import cardio
 
 FIGURES = ROOT / "outputs" / "figures"
 FIGURES.mkdir(parents=True, exist_ok=True)
@@ -103,8 +98,13 @@ The protocol is fixed before modelling, so that no result can steer the choices 
 
 ## 3. The data
 
+The dataset is read exactly as distributed. Exact duplicate records, identical in every column but
+`id`, are removed before anything else (Section 2).
+
+<!-- code: loading -->
+
 ```python
-raw = cardio.load()
+raw = load()
 print(f"{len(raw):,} records, {raw.shape[1]} columns")
 raw.head()
 ```
@@ -143,14 +143,19 @@ that cannot be a measurement of a living adult, not patients who are merely unus
 
 ```python
 pd.DataFrame(
-    [(col, lo, hi) for col, (lo, hi) in cardio.BOUNDS.items()] + [("BMI", *cardio.BMI_BOUNDS)],
+    [(col, lo, hi) for col, (lo, hi) in BOUNDS.items()] + [("BMI", *BMI_BOUNDS)],
     columns=["quantity", "lower bound", "upper bound"],
 ).set_index("quantity")
 ```
 
+The code below defines the plausibility checks, the repair rules of Section 4.2 and the three
+cleaning strategies. Nothing in it is learned from the data: every rule looks at one record at a time.
+
+<!-- code: data quality -->
+
 ```python
-deduped = cardio.deduplicate(raw)
-flags = cardio.audit(deduped)
+deduped = deduplicate(raw)
+flags = audit(deduped)
 print(f"{len(raw) - len(deduped)} exact duplicates removed")
 print(f"{flags.any(axis=1).sum():,} records ({flags.any(axis=1).mean():.1%}) fail at least one check\n")
 flags.sum().rename("records failing").to_frame()
@@ -161,7 +166,7 @@ The most frequent impossible values show clear, repeated patterns:
 
 ```python
 def top_values(col, n=12):
-    lo, hi = cardio.BOUNDS[col]
+    lo, hi = BOUNDS[col]
     bad = deduped.loc[~deduped[col].between(lo, hi), col]
     return bad.value_counts().head(n).rename_axis(col).rename("records").to_frame().T
 
@@ -186,7 +191,7 @@ raw values on a logarithmic scale, with records that fail a check highlighted. O
 patients after repair.
 
 ```python
-repaired, log = cardio.clean(raw, "repair")
+repaired, log = clean(raw, "repair")
 bad = flags.any(axis=1)
 
 fig, axes = plt.subplots(1, 2, figsize=(11, 4.4))
@@ -232,7 +237,7 @@ classify all of these records correctly.
 Each strategy becomes its own training set (RQ2):
 
 ```python
-summary = cardio.cleaning_summary(raw)
+summary = cleaning_summary(raw)
 summary.style.format({"share kept": "{:.1%}", "records": "{:,}"})
 ```
 
@@ -255,8 +260,8 @@ replacing it.
 
 ```python
 rows = []
-for s in cardio.STRATEGIES:
-    d, _ = cardio.clean(raw, s)
+for s in STRATEGIES:
+    d, _ = clean(raw, s)
     rows.append({"strategy": s, "records": len(d),
                  "corr(systolic, cardio)": d["ap_hi"].corr(d["cardio"]),
                  "corr(diastolic, cardio)": d["ap_lo"].corr(d["cardio"]),
@@ -276,8 +281,13 @@ split on ranks and should suffer far less. Section 9 tests whether that holds.
 From here on, the analysis uses the **training patients only**, cleaned with the `drop` strategy (the
 choice of strategy is revisited in Section 9). The test patients stay unseen until Section 8.
 
+The modelling table is built by the functions below. They convert units, add the derived features
+explained in Section 6, and split the patients by the fixed train/test ids of Section 2.
+
+<!-- code: features -->
+
 ```python
-train, test = cardio.train_test("drop")
+train, test = train_test("drop")
 print(f"training patients: {len(train):,}   test patients: {len(test):,}")
 print(f"share with CVD in training: {train['cardio'].mean():.1%}")
 print(f"age {train['age_years'].min():.0f}-{train['age_years'].max():.0f} years, "
@@ -398,7 +408,7 @@ This has two consequences for the rest of the study:
 ### 5.3 Correlations between features
 
 ```python
-cols = cardio.BASE_FEATURES + ["bmi", "cardio"]
+cols = BASE_FEATURES + ["bmi", "cardio"]
 corr = train[cols].corr()
 
 fig, ax = plt.subplots(figsize=(7.4, 6.2))
@@ -455,7 +465,7 @@ ax.bar(range(4), rate["mean"], width=0.62, color=CVD)
 for i, (m, n) in enumerate(zip(rate["mean"], rate["size"])):
     ax.text(i, m + 0.015, f"{m:.0%}", ha="center", color=INK, fontsize=9.5, fontweight="bold")
     ax.text(i, 0.02, f"n = {n:,}", ha="center", color="white", fontsize=8)
-ax.set_xticks(range(4), cardio.BP_STAGE_NAMES)
+ax.set_xticks(range(4), BP_STAGE_NAMES)
 ax.set(ylim=(0, 1), ylabel="share with cardiovascular disease", xlabel="ACC/AHA 2017 blood-pressure category",
        title="Disease rate climbs with every blood-pressure category")
 ax.yaxis.set_major_formatter(plt.matplotlib.ticker.PercentFormatter(1))
@@ -519,12 +529,19 @@ smaller than the fold-to-fold noise is not evidence, so it should not buy comple
 
 ### 7.2 Cross-validated comparison
 
+The baselines and models of Section 7.1, and the cross-validated comparison that scores them all on
+the same five folds:
+
+<!-- code: clinical baselines -->
+
+<!-- code: models -->
+
 ```python
 import time
 
 t0 = time.time()
-comparison, searches = cardio.compare_models(train)
-print(f"{len(searches)} grid searches and 3 baselines, {cardio.CV_FOLDS}-fold CV: {time.time() - t0:.0f} s")
+comparison, searches = compare_models(train)
+print(f"{len(searches)} grid searches and 3 baselines, {CV_FOLDS}-fold CV: {time.time() - t0:.0f} s")
 (comparison.sort_values("auc", ascending=False)
  .style.format({"auc": "{:.4f}", "auc_sd": "{:.4f}", "accuracy": "{:.1%}", "sensitivity": "{:.1%}",
                 "specificity": "{:.1%}", "fit seconds": "{:.1f}"}))
@@ -577,7 +594,7 @@ best settings of logistic regression and gradient boosting are cross-validated a
 without them:
 
 ```python
-features_effect = cardio.feature_set_comparison(train, searches, ["Logistic regression", "Gradient boosting"])
+features_effect = feature_set_comparison(train, searches, ["Logistic regression", "Gradient boosting"])
 features_effect["gain"] = features_effect["recorded + derived"] - features_effect["recorded only"]
 features_effect.style.format("{:.4f}")
 ```
@@ -594,7 +611,7 @@ The same models are trained on growing shares of a training fold. If the curve i
 the full training set, more patients would help. If it is flat, the limit lies in the features.
 
 ```python
-curve = cardio.learning_curve_auc(train, {name: searches[name].best_estimator_
+curve = learning_curve_auc(train, {name: searches[name].best_estimator_
                                           for name in ["Logistic regression", "Gradient boosting"]})
 fig, ax = plt.subplots(figsize=(6.6, 3.5))
 for name, g in curve.groupby("model"):
@@ -627,11 +644,11 @@ extended. Both models moved by less than 0.0005 AUC, so they sit on a plateau.
 ### 7.5 The chosen model
 
 ```python
-chosen = cardio.choose_model(comparison)
+chosen = choose_model(comparison)
 ml = comparison[comparison["kind"] == "machine learning"]
 best = ml["auc"].idxmax()
 print(f"best cross-validated AUC: {best} ({ml.loc[best, 'auc']:.4f} ± {ml.loc[best, 'auc_sd']:.4f})")
-print(f"one standard error: {ml.loc[best, 'auc_sd'] / np.sqrt(cardio.CV_FOLDS):.4f}")
+print(f"one standard error: {ml.loc[best, 'auc_sd'] / np.sqrt(CV_FOLDS):.4f}")
 print(f"chosen by the one-standard-error rule: {chosen} ({ml.loc[chosen, 'auc']:.4f}), "
       f"setting: {ml.loc[chosen, 'best setting']}")
 ```
@@ -652,26 +669,31 @@ exactly once:
 - The baselines that need a cut-off use the one chosen on the training patients.
 - AUC confidence intervals come from 2,000 bootstrap resamples of the test patients.
 
+The helpers for the test-set evaluation: paired bootstrap intervals, out-of-fold predictions and the
+screening cut-off.
+
+<!-- code: evaluation -->
+
 ```python
 from sklearn.metrics import roc_auc_score
 
 final = searches[chosen].best_estimator_
 y_test = test["cardio"]
 test_scores = {
-    f"Rule: systolic ≥ {cardio.SBP_RULE} mmHg": (test["ap_hi"] >= cardio.SBP_RULE).astype(float),
+    f"Rule: systolic ≥ {SBP_RULE} mmHg": (test["ap_hi"] >= SBP_RULE).astype(float),
     "Systolic pressure alone": test["ap_hi"].astype(float),
-    "Framingham (published)": cardio.framingham_risk(test),
-    **{name: s.predict_proba(test[cardio.FEATURES])[:, 1] for name, s in searches.items()},
+    "Framingham (published)": framingham_risk(test),
+    **{name: s.predict_proba(test[FEATURES])[:, 1] for name, s in searches.items()},
 }
 cutoffs = {name: 0.5 for name in test_scores}
-cutoffs["Systolic pressure alone"] = cardio.accuracy_threshold(train["cardio"], train["ap_hi"])
-cutoffs["Framingham (published)"] = cardio.accuracy_threshold(train["cardio"], cardio.framingham_risk(train))
+cutoffs["Systolic pressure alone"] = accuracy_threshold(train["cardio"], train["ap_hi"])
+cutoffs["Framingham (published)"] = accuracy_threshold(train["cardio"], framingham_risk(train))
 
-auc_boot = cardio.bootstrap(y_test, test_scores, roc_auc_score)
+auc_boot = bootstrap(y_test, test_scores, roc_auc_score)
 rows = []
 for name, score in test_scores.items():
-    m = cardio.classification_metrics(y_test, score, cutoffs[name])
-    lo, hi = cardio.interval(auc_boot[name])
+    m = classification_metrics(y_test, score, cutoffs[name])
+    lo, hi = interval(auc_boot[name])
     rows.append({"model": name, "test AUC": m["auc"], "95% CI": f"{lo:.3f}-{hi:.3f}",
                  "CV AUC": comparison.loc[name, "auc"], "accuracy": m["accuracy"],
                  "sensitivity": m["sensitivity"], "specificity": m["specificity"]})
@@ -695,8 +717,8 @@ for name, colour, lw in [(chosen, NO_CVD, 2.2), ("Logistic regression", MUTED, 1
                          ("Systolic pressure alone", "#9b9a94", 1.4), ("Framingham (published)", "#c9c8c1", 1.4)]:
     fpr, tpr, _ = roc_curve(y_test, test_scores[name])
     ax.plot(fpr, tpr, color=colour, lw=lw, label=f"{name} (AUC {roc_auc_score(y_test, test_scores[name]):.3f})")
-rule = cardio.classification_metrics(y_test, test_scores[f"Rule: systolic ≥ {cardio.SBP_RULE} mmHg"], 0.5)
-ax.plot(1 - rule["specificity"], rule["sensitivity"], "D", color=CVD, ms=8, label=f"rule: systolic ≥ {cardio.SBP_RULE}")
+rule = classification_metrics(y_test, test_scores[f"Rule: systolic ≥ {SBP_RULE} mmHg"], 0.5)
+ax.plot(1 - rule["specificity"], rule["sensitivity"], "D", color=CVD, ms=8, label=f"rule: systolic ≥ {SBP_RULE}")
 ax.plot([0, 1], [0, 1], ls="--", lw=0.8, color=MUTED)
 ax.set(xlabel="1 − specificity (healthy patients flagged)", ylabel="sensitivity (diseased patients detected)",
        title="ROC curves on the test patients", xlim=(0, 1), ylim=(0, 1))
@@ -735,7 +757,7 @@ pairs = [(chosen, other) for other in ["Random forest", "Neural network (MLP)", 
 diffs = []
 for a, b in pairs:
     d = auc_boot[a] - auc_boot[b]
-    lo, hi = cardio.interval(d)
+    lo, hi = interval(d)
     diffs.append({"comparison": f"{a} − {b}", "AUC difference": roc_auc_score(y_test, test_scores[a])
                   - roc_auc_score(y_test, test_scores[b]), "95% CI": f"{lo:+.4f} to {hi:+.4f}",
                   "excludes zero": lo > 0 or hi < 0})
@@ -762,8 +784,8 @@ training patients, using predictions from models that did not see them (out-of-f
 ```python
 from sklearn.metrics import confusion_matrix
 
-oof = cardio.out_of_fold(final, train)
-cut_screen = cardio.screening_threshold(train["cardio"], oof, 0.80)
+oof = out_of_fold(final, train)
+cut_screen = screening_threshold(train["cardio"], oof, 0.80)
 risk_test = test_scores[chosen]
 
 fig, axes = plt.subplots(1, 2, figsize=(9.6, 3.9))
@@ -778,7 +800,7 @@ for ax, (label, cut) in zip(axes, [("accuracy cut-off (0.50)", 0.5), (f"screenin
     ax.set_yticks([0, 1], ["healthy", "has CVD"])
     ax.grid(False)
     ax.set_title(label)
-    m = cardio.classification_metrics(y_test, risk_test, cut)
+    m = classification_metrics(y_test, risk_test, cut)
     summary.append({"cut-off": label, **m})
 fig.suptitle(f"{chosen} on the test patients", x=0.01, ha="left", fontsize=12, fontweight="bold")
 fig.tight_layout()
@@ -801,8 +823,10 @@ factor is scrambled across patients. Related features are scrambled together, so
 blood-pressure features cannot cover for one another. **Partial dependence** asks how the average
 predicted risk changes as one factor is varied for everyone.
 
+<!-- code: explanation -->
+
 ```python
-importance = cardio.grouped_permutation_importance(final, test)
+importance = grouped_permutation_importance(final, test)
 
 fig, ax = plt.subplots(figsize=(6.6, 3.6))
 order = importance.iloc[::-1]
@@ -830,11 +854,11 @@ curves = [("ap_hi", range(100, 191, 5), "systolic pressure (mmHg)"),
           ("smoke", [0, 1], "smokes (0 no, 1 yes)"),
           ("active", [0, 1], "physically active (0 no, 1 yes)"),
           ("alco", [0, 1], "drinks alcohol (0 no, 1 yes)")]
-sample = test.sample(3000, random_state=cardio.SEED)
+sample = test.sample(3000, random_state=SEED)
 
 fig, axes = plt.subplots(2, 4, figsize=(13, 5.6), sharey=True)
 for ax, (feature, values, label) in zip(axes.flat, curves):
-    pdc = cardio.partial_dependence_curve(final, sample, feature, list(values))
+    pdc = partial_dependence_curve(final, sample, feature, list(values))
     ax.plot(pdc.index, pdc.values, "-o", color=NO_CVD, lw=2, ms=4)
     ax.set(xlabel=label)
     ax.yaxis.set_major_formatter(plt.matplotlib.ticker.PercentFormatter(1, decimals=0))
@@ -869,8 +893,10 @@ transparent score. Here each factor is cut into clinical bands, a logistic regre
 the bands, and its coefficients are rounded to whole points (one point = 0.1 in log-odds). The total
 then maps to a risk.
 
+<!-- code: points score -->
+
 ```python
-points = cardio.PointsScore().fit(train, train["cardio"])
+points = PointsScore().fit(train, train["cardio"])
 card = points.table()
 card.set_index(["factor", "band"])
 ```
@@ -883,11 +909,11 @@ only the four factors with a sound direction: age, systolic pressure, BMI and ch
 
 ```python
 test_scores["Points score"] = points.predict_proba(test)
-boot_points = cardio.bootstrap(y_test, {"Points score": test_scores["Points score"], chosen: test_scores[chosen]},
+boot_points = bootstrap(y_test, {"Points score": test_scores["Points score"], chosen: test_scores[chosen]},
                                roc_auc_score)
-m = cardio.classification_metrics(y_test, test_scores["Points score"], 0.5)
-lo, hi = cardio.interval(boot_points["Points score"])
-d_lo, d_hi = cardio.interval(boot_points[chosen] - boot_points["Points score"])
+m = classification_metrics(y_test, test_scores["Points score"], 0.5)
+lo, hi = interval(boot_points["Points score"])
+d_lo, d_hi = interval(boot_points[chosen] - boot_points["Points score"])
 print(f"points score on the test patients: AUC {m['auc']:.3f} ({lo:.3f}-{hi:.3f}), accuracy {m['accuracy']:.1%}, "
       f"sensitivity {m['sensitivity']:.1%}, specificity {m['specificity']:.1%}")
 print(f"{chosen} minus points score: AUC {roc_auc_score(y_test, test_scores[chosen]) - m['auc']:+.4f} "
@@ -909,10 +935,10 @@ plt.show()
 ```
 
 ```python
-clinical = cardio.PointsScore(factors=cardio.CLINICAL_FACTORS).fit(train, train["cardio"])
+clinical = PointsScore(factors=CLINICAL_FACTORS).fit(train, train["cardio"])
 test_scores["Points score (clinical, 4 factors)"] = clinical.predict_proba(test)
 for name in ["Points score", "Points score (clinical, 4 factors)", "Logistic regression", chosen]:
-    m = cardio.classification_metrics(y_test, test_scores[name], 0.5)
+    m = classification_metrics(y_test, test_scores[name], 0.5)
     print(f"{name:<38} AUC {m['auc']:.3f}   accuracy {m['accuracy']:.1%}")
 clinical.table().set_index(["factor", "band"]).T
 ```
@@ -937,10 +963,15 @@ training data, on the `drop` training data and on the `repair` training data. Al
 scored on the same test patients (those whose records pass every check), so only the training data
 differs.
 
+The reliability checks of this section: the cleaning-strategy comparison, a minimal SMOTE, the three
+deliberate mistakes, subgroup metrics and predictive value at other prevalences.
+
+<!-- code: reliability -->
+
 ```python
-strategies = cardio.strategy_comparison({"Gradient boosting": final, "Logistic regression": searches["Logistic regression"].best_estimator_})
+strategies = strategy_comparison({"Gradient boosting": final, "Logistic regression": searches["Logistic regression"].best_estimator_})
 (strategies.pivot(index="strategy", columns="model", values=["test AUC", "test accuracy"])
- .reindex(list(cardio.STRATEGIES)).style.format("{:.4f}"))
+ .reindex(list(STRATEGIES)).style.format("{:.4f}"))
 ```
 
 The answer depends on the model, exactly as Section 4.3 predicted:
@@ -968,8 +999,8 @@ mistakes, if any, particular papers made cannot be known from here.
 
 ```python
 t0 = time.time()
-correct_acc = cardio.classification_metrics(y_test, test_scores[chosen], 0.5)["accuracy"]
-leakage = cardio.leakage_experiments(train, test, correct_acc)
+correct_acc = classification_metrics(y_test, test_scores[chosen], 0.5)["accuracy"]
+leakage = leakage_experiments(train, test, correct_acc)
 print(f"leakage experiments: {time.time() - t0:.0f} s")
 leakage.style.format({"reported accuracy": "{:.1%}"}).hide(axis="index")
 ```
@@ -1030,7 +1061,7 @@ a small excess of observed cases in the middle range.
 ### 9.4 Does the model work equally well for everyone?
 
 ```python
-subgroups = cardio.subgroup_table(test, test_scores[chosen])
+subgroups = subgroup_table(test, test_scores[chosen])
 subgroups.style.format({"patients": "{:,}", "share with CVD": "{:.1%}", "mean predicted risk": "{:.1%}",
                         "AUC": "{:.3f}", "sensitivity": "{:.1%}", "specificity": "{:.1%}"})
 ```
@@ -1053,10 +1084,10 @@ specificity describe the model and carry over. The **positive predictive value**
 flagged patient really has CVD, depends on how common the disease is:
 
 ```python
-m_acc = cardio.classification_metrics(y_test, test_scores[chosen], 0.5)
-m_scr = cardio.classification_metrics(y_test, test_scores[chosen], cut_screen)
+m_acc = classification_metrics(y_test, test_scores[chosen], 0.5)
+m_scr = classification_metrics(y_test, test_scores[chosen], cut_screen)
 ppv = pd.DataFrame({f"{label} (sens {m['sensitivity']:.0%}, spec {m['specificity']:.0%})":
-                    {f"{p:.0%}": cardio.ppv_at_prevalence(m["sensitivity"], m["specificity"], p)
+                    {f"{p:.0%}": ppv_at_prevalence(m["sensitivity"], m["specificity"], p)
                      for p in (0.5, 0.3, 0.2, 0.1, 0.05)}
                     for label, m in [("accuracy cut-off", m_acc), ("screening cut-off", m_scr)]})
 ppv.index.name = "share of patients with CVD"
@@ -1072,19 +1103,21 @@ such a population, it would have to be recalibrated to that population's prevale
 
 ## 10. Using the model
 
-The project's goal was a model that checks a patient for cardiovascular disease. `cardio.py` turns
-the chosen model into a tool that does this. It saves the model with its two cut-offs and the
-scorecard. It also checks a new examination with the same plausibility rules as the data, so an
-impossible reading is rejected instead of scored, and then reports the risk, the verdict and the
-points.
+The project's goal was a model that checks a patient for cardiovascular disease. The code below
+turns the chosen model into that check. It saves the model with its two cut-offs and the clinical
+scorecard to `outputs/model.joblib`. It also checks a new examination with the same plausibility
+rules as the data, so an impossible reading is rejected instead of scored, and then reports the risk,
+the verdict and the points.
+
+<!-- code: using the model -->
 
 ```python
-# the setting saved for the command line must be the one this report selected
-selected = {k: v for k, v in final.get_params().items() if k in cardio.FINAL_PARAMS}
-assert selected == cardio.FINAL_PARAMS, (selected, cardio.FINAL_PARAMS)
+# the setting fixed in FINAL_PARAMS must be the one this report selected
+selected = {k: v for k, v in final.get_params().items() if k in FINAL_PARAMS}
+assert selected == FINAL_PARAMS, (selected, FINAL_PARAMS)
 
-bundle = cardio.build_final(train, model=final)
-print("saved:", cardio.save_final(bundle).relative_to(ROOT))
+bundle = build_final(train, model=final)
+print("saved:", save_final(bundle).relative_to(ROOT))
 print(f"screening cut-off: {bundle['screening_cutoff']:.3f}")
 ```
 
@@ -1101,7 +1134,7 @@ examples = {
 }
 rows = []
 for label, values in examples.items():
-    r = cardio.assess(bundle, cardio.patient(**values))
+    r = assess(bundle, patient(**values))
     rows.append({"patient": label, "predicted risk": r["risk"], "verdict": r["verdict"],
                  "screening": r["screening"], "points": r["points"], "risk from points": r["points_risk"]})
 pd.DataFrame(rows).set_index("patient").style.format({"predicted risk": "{:.0%}", "risk from points": "{:.0%}"})
@@ -1115,23 +1148,20 @@ same order as the model.
 
 ```python
 try:
-    cardio.patient(age=50, sex="male", height=175, weight=80, systolic=1400, diastolic=90)
+    patient(age=50, sex="male", height=175, weight=80, systolic=1400, diastolic=90)
 except ValueError as e:
     print("rejected:", e)
 ```
 
-The same works from a terminal, after `python cardio.py train`:
-
-```
-$ python cardio.py predict --age 62 --sex male --height 172 --weight 98 --systolic 165 --diastolic 100 --cholesterol 3
-```
+A new patient needs only the saved file: `assess(load_final(), patient(...))` gives the same
+answer in any later session.
 
 ## 11. Conclusion
 
 **Objective met.** A gradient-boosting model detects cardiovascular disease from the eleven values of
 a routine examination. On 13,722 patients it never saw, it reaches an AUC of 0.804 (95% CI
 0.797-0.811) and 73.6% accuracy. Its risks are well calibrated, and it works equally well for women
-and men. `cardio.py` packages it as a tool that checks a new examination, rejects impossible values,
+and men. Section 10 packages it as a check of a new examination that rejects impossible values
 and returns a risk, a verdict and a points breakdown.
 
 **Q1. What machine learning adds over what a doctor already has: something real, but small.**

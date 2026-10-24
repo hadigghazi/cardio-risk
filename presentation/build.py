@@ -284,6 +284,10 @@ def logo_plate():
 
 
 # ------------------------------------------------------------------ numbers from the saved model
+# The report saves the model from inside the notebook, where PointsScore is defined in the notebook's
+# own namespace (__main__); unpickling it here needs that name to point at the same class in cardio.py.
+import __main__  # noqa: E402
+__main__.PointsScore = cardio.PointsScore
 BUNDLE = cardio.load_final(ROOT / "outputs" / "model.joblib")
 CARD = BUNDLE["points"].table()
 if list(BUNDLE["points"].factors) != cardio.CLINICAL_FACTORS:
@@ -592,24 +596,25 @@ notes(s, "Third question: can the risks be trusted? The model is well calibrated
 
 # 13 --------------------------------------------------------------- the tool
 s = new("TITLE_ONLY"); S.append(s)
-title(s, "The deliverable: a working tool")
-cmd = ("$ python cardio.py predict --age 62 --sex male --height 172 --weight 98 "
-       "--systolic 165 --diastolic 100 --cholesterol 3")
+title(s, "Checking a new patient")
+cmd = ["bundle = load_final()",
+       "assess(bundle, patient(age=62, sex=\"male\", height=172, weight=98,",
+       "                       systolic=165, diastolic=100, cholesterol=3))"]
 r = EXAMPLE_RESULT
-out_lines = ["predicted risk of cardiovascular disease: %.0f%%" % (100 * r["risk"]),
+out_lines = ["risk of cardiovascular disease: %.0f%%" % (100 * r["risk"]),
              "verdict: %s" % r["verdict"],
              "screening (cut-off %.2f): %s" % (r["screening_cutoff"], r["screening"]),
              "clinical points score: %d points, risk %.0f%%" % (r["points"], 100 * r["points_risk"])]
 out_lines += ["   %+d  %s" % (v, k) for k, v in r["points_breakdown"].items()]
-term = box(s, 0.79, 1.3, 8.43, 2.5, fill=NAVY, radius=0.06)
-text(s, 1.0, 1.45, 8.0, 2.6, [[(cmd, {"color": BLUE, "bold": True})]] + [[(l, {})] for l in out_lines],
+term = box(s, 0.79, 1.3, 8.43, 2.75, fill=NAVY, radius=0.06)
+text(s, 1.0, 1.42, 8.0, 2.6, [[(c, {"color": BLUE, "bold": True})] for c in cmd] + [[(l, {})] for l in out_lines],
      size=10.5, font=MONO, color=WHITE, space=3)
-term2 = box(s, 0.79, 4.0, 8.43, 0.75, fill=SOFT, radius=0.1)
-text(s, 1.0, 4.06, 8.0, 0.65, [[("$ python cardio.py predict ... --systolic 1400 ...", {"color": NAVY, "bold": True})],
-     [("rejected: implausible examination values: ap_hi out of range", {"color": DKRED})]], size=10.5, font=MONO,
+term2 = box(s, 0.79, 4.2, 8.43, 0.75, fill=SOFT, radius=0.1)
+text(s, 1.0, 4.26, 8.0, 0.65, [[("patient(age=50, sex=\"male\", ..., systolic=1400, diastolic=90)", {"color": NAVY, "bold": True})],
+     [("ValueError: implausible examination values: ap_hi out of range", {"color": DKRED})]], size=10.5, font=MONO,
      space=2)
-notes(s, "The deliverable is a working tool. The Python file trains and saves the model, then checks a new patient "
-         "from the command line. It rejects impossible readings, with the same rules as the cleaning, and returns "
+notes(s, "The last section of the notebook turns the model into a check of a new patient. It saves the model, then "
+         "assesses an examination in two lines. It rejects impossible readings, with the same rules as the cleaning, and returns "
          "the risk, the verdict at two cut-offs, one for accuracy and one for screening, and the clinical points "
          "with their breakdown. Here a 62-year-old man with stage 2 hypertension and high cholesterol gets "
          "%.0f percent." % (100 * r["risk"]))
