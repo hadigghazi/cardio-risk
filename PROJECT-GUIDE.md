@@ -1,582 +1,774 @@
-# Project guide: Patient's Sickness Prediction (cardio)
+# The complete guide to the project
 
-A complete account of the project: what is in the submission, what every file does, what was done
-and in what order, why each decision was taken, and the concepts you need to explain it. Every number
-here comes from the final executed report (VM run 40122319735).
+**Patient's Sickness Prediction: detecting cardiovascular disease from a routine medical examination**
 
----
+This guide explains the whole project: the idea, every decision and why it was taken, how the work
+was done, every code cell of the notebook, the results, and the deliverables. Every number comes from
+the final executed notebook (VM run 40122319735).
 
-## 1. The project in one paragraph
-
-The course asked for one of five topics, done alone, as "practical research" that applies AI to a
-public dataset. The deliverable is a zip with the report as a notebook (`.ipynb`), a Python file
-(`.py`) and a presentation. We chose **topic 2, Patient's Sickness Prediction**. It uses `cardio.csv`,
-70,000 patients with 11 values recorded at a medical check-up and a yes/no label for cardiovascular
-disease (CVD).
-
-- **What we built.** We cleaned the data, explored it, and compared clinical baselines with five
-  machine-learning models. The final model is **gradient boosting: 73.6% accuracy and ROC AUC 0.804
-  on 13,722 patients it never saw.** A doctor's simple rule (systolic pressure ≥ 130 mmHg) gets
-  71.3%.
-- **The tool.** The last section of the notebook packages the model as a check of a new patient.
-- **The honest framing.** The report also shows what the model adds, how data handling changes the
-  results (including how some published papers could claim 88–94.5%), and how far its predictions can
-  be trusted.
+How to read it: Part 1 gives the idea, Part 2 the decisions, Part 3 how it was built. **Part 4 walks
+through the notebook cell by cell; read it with `report.ipynb` open beside it.** Part 5 collects the
+results, Part 6 describes the deliverables, and Parts 7–8 explain the concepts and prepare you for
+questions.
 
 ---
 
-## 2. The submission zip, file by file
+## Part 1 — The idea
 
-`submission/Hadi-Ghazi_Patient-Sickness-Prediction.zip`:
+### 1.1 What the course asked
 
-| File | Required by the brief? | What it is |
+The brief: one student picks one of five topics, and does "practical research" by applying AI to a
+public dataset. It hands in a zip with the work (as a notebook, or as a Python file) and a final
+presentation. Topic 2, **Patient's Sickness Prediction**, says: "Using the cardio dataset, create a
+model to check the presence or absence of cardiovascular disease of a patient."
+
+### 1.2 The dataset
+
+`cardio.csv` has **70,000 patients**. Each row is one medical examination with 11 values and a label:
+
+| Column | Meaning | Kind |
 |---|---|---|
-| `report.ipynb` | yes: the report "as a .ipynb file" | the full report with **all** the code inside it, already executed: text, code, tables, 13 figures |
-| `Cardio-Risk.pptx` | yes: "a final presentation" | 15 slides + 3 backup, speaker notes on every slide |
-| `data/cardio.csv` | no, added | the dataset, so the notebook can be re-run |
-| `requirements.txt` | no, added | exact library versions, so the results reproduce |
+| `age` | age in **days** | measured |
+| `gender` | 1 or 2 (the documentation doesn't say which is which) | recorded |
+| `height`, `weight` | cm, kg | measured |
+| `ap_hi`, `ap_lo` | systolic and diastolic blood pressure, mmHg | measured |
+| `cholesterol`, `gluc` | 1 normal, 2 above normal, 3 well above normal | lab result |
+| `smoke`, `alco`, `active` | smoking, alcohol, physical activity, 0/1 | **self-reported** |
+| `cardio` | has cardiovascular disease (CVD), 0/1 | **the target** |
 
-**Why there is no `.py` file.** The brief lists ".ipynb" and ".py" because a project can be
-delivered either way, and we chose the notebook. Everything is in it: every function, model and
-check appears as visible code in the section where it is first used. The notebook needs only
-`data/cardio.csv` next to it, or in a parent folder.
+### 1.3 The core idea in three sentences
 
-### 2.1 `report.ipynb`: the report
+Building a model that predicts `cardio` is easy; any classifier gets about 73%. The interesting
+questions are **whether that is good**, **what it adds over what doctors already do**, and **whether
+the numbers can be trusted**. So the project builds the model the brief asks for, then evaluates it
+around three questions:
 
-Read it top to bottom; it is written as a paper with code inside it. It has 91 cells, 52 of them
-code, all executed with outputs saved, and 13 embedded figures. It was executed on the VM in a Docker
-container in 536 seconds.
+- **Q1 — What does machine learning add over what a doctor already has?** The comparison is with a
+  guideline blood-pressure rule and the Framingham risk score.
+- **Q2 — How much do data-handling choices change the measured performance?** This covers cleaning,
+  and the common mistakes that inflate accuracy.
+- **Q3 — Can the predictions be trusted and explained?** This covers calibration, which factors drive
+  the predictions, how different patients are served, and a points score a doctor could use.
 
-**§1 Introduction.**
+### 1.4 Why these questions (what we found before starting)
 
-- **Why CVD matters.** It causes 17.9 million deaths a year (WHO).
-- **The objective.** Build a model that detects CVD from one examination, and evaluate it honestly.
-- **Why the data is tricky.** It contains impossible values. Careful studies get about 73%, while
-  some papers claim 88% and 94.5%.
-- **Three guiding questions:**
-  - **Q1.** What does machine learning add over what doctors already have (a blood-pressure rule and
-    the Framingham risk score)?
-  - **Q2.** How much do data-handling choices (cleaning, leakage) change the measured performance?
-  - **Q3.** Can the predictions be trusted and explained?
+- **The data has impossible values**, such as blood pressures of −150 or 16,020 mmHg. Cleaning them
+  matters.
+- **Careful studies get about 73%** on this dataset (CatBoost 0.734, arXiv 2507.21898).
+- **Some papers claim much more:** 88% (Omkari and Shaik, IEEE Access 2024) and 94.5% (Zafar et al.,
+  Systems and Soft Computing 2026). That gap suggests mistakes in how those models were evaluated.
+- **A single rule is already 71.3% accurate**: "systolic pressure at least 130 mmHg", the threshold
+  for stage 1 hypertension. So the real gain from ML is small, and measuring it honestly is the
+  contribution.
 
-**§2 Evaluation protocol.** The rules were fixed before any model was trained:
+### 1.5 The answer, in one paragraph
 
-1. Remove the 24 exact duplicate records first, so the same patient cannot be in both train and test.
-2. Make one stratified 80/20 train/test split by patient id (seed 42). Everything later uses these ids.
-3. Cleaning uses fixed per-record rules and learns nothing from the data, so it cannot leak.
-4. Choose models with 5-fold cross-validation on training data only, and score the test set once.
-5. When comparing cleaning strategies, score all of them on the same test patients.
-6. Metrics: ROC AUC is primary; accuracy, sensitivity and specificity are reported at stated cut-offs;
-   Brier score and calibration measure the risks. Every test number gets a 95% bootstrap interval.
-7. The leakage experiments are deliberately wrong pipelines, kept apart and never used for model choice.
+- **The model.** Gradient boosting detects CVD with **73.6% accuracy and ROC AUC 0.804** on 13,722
+  patients it never saw. The guideline rule gets 71.3%.
+- **The gain is real but small.** At the same false-alarm rate, the model finds 301 more of the 6,785
+  sick patients. The ceiling of about 74% comes from the 11 recorded values themselves, not from the
+  algorithm.
+- **Evaluation mistakes explain the inflated claims.** Cleaning matters for linear models, and leaky
+  evaluation can produce 85–100% accuracy from the same data.
+- **The risks can be trusted, within limits.** They are well calibrated and equal for both sexes, but
+  weaker for patients over 60, and lifestyle effects are reverse-caused associations.
+- **A doctor's version.** A 4-factor paper scorecard comes within 0.011 AUC of the best model.
 
-**§3 The data.** 70,000 records with 13 columns: id, age (in days), gender (coded 1/2), height,
-weight, systolic `ap_hi` and diastolic `ap_lo` pressure, cholesterol and glucose (1/2/3), smoke,
-alco, active (0/1), and the target `cardio`. The classes are 50/50 and no cells are empty. Gender
-code 2 is taken as male because it is 8.5 cm taller on average. Age is converted to years (30–65).
+---
 
-**§4 Data quality.**
+## Part 2 — Every decision, and why
 
-- **4.1 Plausibility audit.** Wide physiological bounds: systolic 70–250, diastolic 40–150, height
-  120–220 cm, weight 30–200 kg, BMI 12–70, and diastolic must be below systolic. 1,395 records (2.0%)
-  fail at least one check, almost all on blood pressure. The errors follow patterns:
-  - an **extra zero**: 1000 should be 100 (over 800 records)
-  - **cmHg typed instead of mmHg**: 12 should be 120
-  - a **stray minus sign**: −120 should be 120
-  - the two readings **swapped**: 80/120 should be 120/80
+| # | Decision | What we chose | Alternatives | Why |
+|---|---|---|---|---|
+| 1 | Topic | Cardio (topic 2) | water, spam, loan, credit cards | Water has no signal (correlations below 0.035). Spam is trivially 97%+ because of an Enron vocabulary shortcut and 541 duplicates. Loan is tiny (614 rows), and one rule gives 80.9%. Credit cards is clustering with no right answer to check against. Cardio is large, real, messy, and medically meaningful. |
+| 2 | Framing | the model the brief asks for, plus an honest evaluation through Q1–Q3 | a pure "beat the accuracy" study, or a pure leakage audit | "Beat the accuracy" hits a ceiling at ~73% and says nothing. An audit alone would dodge the brief. |
+| 3 | Structure | conventional report: data → cleaning → EDA → features → models → evaluation → use → conclusion | — | You asked that it read like the project in the brief. |
+| 4 | Duplicates | remove 24 exact duplicates first; keep 17 contradictory groups | keep all | A duplicate pair split across train and test lets the model be tested on a patient it has seen. Contradictory records are honest noise. |
+| 5 | Split | one stratified 80/20 split by patient id, seed 42, drawn once | random splits per experiment | The same test patients for every comparison; stratified keeps 50/50 in both parts. |
+| 6 | Cleaning bounds | wide physiological bounds (systolic 70–250, diastolic 40–150, height 120–220, weight 30–200, BMI 12–70, diastolic < systolic) | trimming the top and bottom 2.5% | Percentile trimming removes real, unusual patients. The bounds remove only values no living adult can have. |
+| 7 | Cleaning strategy | **drop** as the main version; **repair** and **raw** compared | repair only | Drop invents nothing. Repair is a reasoned guess (906 could be 90 or 96), so it is tested against drop rather than trusted. |
+| 8 | Sex code | gender 2 = male | — | Code 2 is 8.5 cm taller on average. |
+| 9 | Exploration | on training patients only | on all data | Looking at test patients could steer choices. |
+| 10 | Derived features | BMI, pulse pressure, mean arterial pressure, ACC/AHA stage; kept though they add no AUC | raw values only | They cost nothing and make explanations clinical. |
+| 11 | Main metric | ROC AUC; accuracy, sensitivity and specificity at stated cut-offs | accuracy only | AUC doesn't depend on a cut-off; accuracy alone hides the trade-off between missed and false cases. |
+| 12 | Baselines | systolic ≥ 130 rule; systolic alone with a learned cut-off; Framingham as published; Framingham refitted | a majority-class baseline only | Q1 needs what doctors actually use. The refit separates "wrong formula" from "wrong weights". |
+| 13 | Models | logistic regression, random forest, gradient boosting (sklearn's HistGradientBoosting), MLP neural network | XGBoost, LightGBM | They cover linear, bagged trees, boosted trees and a neural net. HistGradientBoosting is the same algorithm family as XGBoost, without extra dependencies. |
+| 14 | Tuning | grid search with 5-fold CV on training data; grids widened when the best setting sat at an edge | fixed defaults | Fair to every model. A best value at the edge of a grid means a better one might lie beyond it. |
+| 15 | Model choice | the simplest model within one standard error of the best CV AUC, fixed in advance | the highest score | Differences inside the noise should not buy complexity. |
+| 16 | Test set | scored once, with 2,000 bootstrap resamples and paired differences | a single number | A one-point difference can be noise with 13,722 patients. |
+| 17 | Cut-offs | 0.50 (accuracy) and a screening cut-off giving 80% sensitivity, chosen on out-of-fold training predictions | choosing it on the test set | Choosing on the test set would be leakage. |
+| 18 | Explanations | grouped permutation importance plus partial dependence | single-feature importance; SHAP | The five blood-pressure features carry the same information, so scrambling one alone would understate blood pressure. SHAP would add a dependency without changing the conclusion. |
+| 19 | Interpretable model | a points scorecard, then a 4-factor clinical version | none | Since ML gains little, a transparent score is the practical output. Lifestyle factors earned negative points, so they were dropped. |
+| 20 | Oversampling (SMOTE) | not used in the real pipeline; only in the leakage demonstration | use it | The classes are already 50/50. |
+| 21 | Leakage | three deliberate mistakes reproduced and labelled; no claim about what specific papers did | accuse the papers | We cannot see their code. |
+| 22 | Where to compute | Docker on dblp-vm with pinned versions, via GitHub Actions | the laptop | Your rule: work on the VM. It is also reproducible. |
+| 23 | Submission format | the notebook alone, with all code inside | notebook + .py | You confirmed the brief means either one. |
+| 24 | One copy of the code | `cardio.py` is the single source; the notebook build copies its sections in | maintain two copies | Two copies drift apart. The tests and the deck builder use the same code. |
+| 25 | Presentation | PowerPoint, built by a script from the Slidesgo template, Morph, about 10 minutes | Google Slides, web deck | Your choice, matching your earlier decks. |
+| 26 | Repository visibility | public (made by you) | private | The private Actions allowance ran out, and public repositories get Actions for free. |
 
-  Figure 1 shows the raw scatter (log scale) next to the repaired data. 17 groups of records are
-  identical in every feature but have different diagnoses; they are kept, as honest noise.
-- **4.2 Three cleaning strategies:**
-  - `raw`: duplicates removed only; 69,976 records.
-  - `drop`: every implausible record removed; 68,581 records (98.0%). Used for the main analysis.
-  - `repair`: fixes blood pressures with a recognisable error (sign, then unit, then extra digits,
-    then swap), then removes whatever is still implausible. 69,838 records, 1,257 of them repaired,
-    each repair logged.
-- **4.3 What cleaning changes.** The correlation of systolic pressure with the diagnosis is **0.054
-  raw and 0.428 after cleaning**. Fewer than 2% of the records hide the strongest predictor from any
-  linear analysis.
+---
 
-**§5 Exploratory analysis**, on the 54,859 training patients only, so the test patients influence
-nothing:
+## Part 3 — How the work was done
 
-- **5.1 Disease rate by factor** (Figure 2). It rises steadily with systolic pressure (23% below 120,
-  86% at 160+), age (23% → 66%), BMI (26% → 68%) and cholesterol (44% → 76%). Glucose is weaker. The
-  lifestyle answers barely matter, and smokers and drinkers have slightly *less* disease.
-- **5.2 The smoking paradox** (Figure 3).
-  - Almost only men smoke here (22% of men, 1.8% of women).
-  - Among men, smokers have less CVD in every age group.
-  - The likely explanation is the "sick quitter": diagnosis and answers come from the same visit, so
-    patients already diagnosed have usually quit.
-  - Two consequences: this is **detection of existing disease, not prediction of future disease**,
-    and feature effects are **associations, not causes**.
-- **5.3 Correlations** (Figure 4). The two pressures correlate at 0.73, weight and BMI at 0.86. Trees
-  don't care; logistic regression coefficients must be read with care.
-- **5.4 Implications.** The effects are monotonic, so a linear model should get most of the signal.
-  There is no class imbalance, so SMOTE (oversampling) has nothing to fix.
+### 3.1 The repository
 
-**§6 Feature engineering.** Four standard clinical quantities are added:
+All work lives in https://github.com/hadigghazi/cardio-risk (now public):
 
-- **BMI**: weight / height².
-- **Pulse pressure**: systolic − diastolic.
-- **Mean arterial pressure**: (systolic + 2 × diastolic) / 3.
-- **ACC/AHA 2017 blood-pressure stage**: 0 normal, 1 elevated, 2 stage 1, 3 stage 2. Figure 5 shows
-  the disease rate rising across the stages.
-
-They are fixed formulas, so they cannot leak. §7 shows they don't improve the AUC, but they make
-explanations readable.
-
-**§7 Models** (5-fold CV on training patients):
-
-- **The candidates:**
-  - Three baselines that fit nothing: the rule systolic ≥ 130; systolic pressure alone with a cut-off
-    chosen on training folds; the Framingham 2008 office-based score as published.
-  - Five models: Framingham's formula refitted on our data, logistic regression, random forest,
-    gradient boosting (HistGradientBoosting), and a neural network (MLP). Each model's
-    hyperparameters are searched by grid.
-- **Results** (Figure 6). Gradient boosting has CV AUC 0.8005 and 73.5% accuracy. Random forest
-  (0.7992) and the MLP (0.7986) are essentially tied with it; logistic regression is 0.7902. Below
-  the models: Framingham refitted 0.780, systolic pressure alone 0.751, the rule 0.712, Framingham
-  published 0.696.
-- **Notable findings:**
-  - The data-chosen cut-off for systolic pressure is exactly **130 mmHg** in all five folds, the
-    guideline's own value.
-  - **Published Framingham ranks worse than blood pressure alone.** It predicts a first event over 10
-    years, a different question in a different population. Refitted, it reaches 0.780: the formula is
-    fine, but the weights don't transfer.
-- **7.3 Derived features.** They change the AUC by under 0.001.
-- **7.4 Learning curve** (Figure 7). Logistic regression stops improving at about 2,000 patients.
-  Gradient boosting overtakes it, but the last doubling (22k → 44k patients) adds only 0.0015. **The
-  ~0.80 AUC ceiling comes from the information in the 11 recorded values, not from too little data.**
-  Widening the search grids changed nothing beyond the 4th decimal.
-- **7.5 Choice.** The one-standard-error rule, fixed in advance, picks **gradient boosting**
-  (learning rate 0.01, 15 leaves per tree, at least 50 patients per leaf).
-
-**§8 The final model on the test set** (13,722 patients, used once):
-
-- **8.1 Test results.** Gradient boosting reaches **AUC 0.804 (95% CI 0.797–0.811), 73.6% accuracy,
-  68.9% sensitivity, 78.2% specificity**. Every model's test AUC is within 0.004 of its CV AUC, so
-  nothing overfitted. ROC curves are in Figure 8.
-- **At the rule's own specificity** (80.6%), the model detects 66.2% of diseased patients instead of
-  61.8%: **301 more of 6,785**.
-- **8.2 Paired bootstrap differences.**
-  - The lead over random forest and the MLP is under 0.002: statistically detectable, clinically
-    meaningless.
-  - Over logistic regression: +0.012. Over systolic pressure alone: +0.050.
-- **8.3 Thresholds** (Figure 9).
-  - At 0.50: 2,112 sick patients missed, 1,510 healthy patients flagged.
-  - Screening cut-off (0.38), chosen on training predictions to catch 80% of the sick: test
-    sensitivity 80.1%, specificity 64.3%; 1,347 missed, 2,476 flagged.
-- **8.4 What drives it** (Figures 10–11).
-  - **Grouped permutation importance**: scrambling the 5 blood-pressure features costs 0.210 AUC; age
-    0.036, cholesterol 0.030, body size 0.007; everything else ≈ 0.
-  - **Partial dependence**: predicted risk sits around 31–39% below 125 mmHg, jumps to about 84% by
-    150 mmHg, then stays flat. **It acts like a switch, not a slope**, which explains why trees beat
-    logistic regression. Glucose, smoking and alcohol come out flat or slightly protective (reverse
-    causation again).
-- **8.5 A points score** (Figure 12).
-  - **Full scorecard**: each factor's band earns whole points. AUC 0.795, accuracy 72.5%.
-  - **The problem**: smoking, alcohol, activity and high glucose earn *negative* points.
-  - **The fix**: a **clinical version** with only age, systolic pressure, BMI and cholesterol reaches
-    **AUC 0.793 and 72.3% accuracy**. That equals full logistic regression and is only 0.011 below
-    gradient boosting.
-
-**§9 Reliability:**
-
-- **9.1 Cleaning strategy.**
-  - Gradient boosting is unaffected: 0.804 trained on raw, dropped or repaired data. Trees split on
-    the order of values.
-  - Logistic regression falls from 0.793 to **0.776 on raw data**.
-  - Repair and drop give the same results.
-- **9.2 Leakage experiments**, the same data with three mistakes:
-
-  | Pipeline | Reported accuracy |
-  |---|---|
-  | Correct (gradient boosting, unseen patients) | **73.6%** |
-  | Scored on the training patients (fully grown random forest) | **99.9%** (71.0% on unseen patients) |
-  | SMOTE before the split, then 1-nearest-neighbour | **85.3%** |
-  | SMOTE before the split, then random forest | **86.7%** |
-  | SMOTE done correctly (training data only) | 64.0–70.5% |
-  | Luckiest of 50 random splits | 73.4% (median split: 72.8%) |
-
-  Conclusion: accuracies far above 74% on this dataset should be read as signs of leakage. We do not
-  claim to know what the 88% or 94.5% papers actually did.
-- **9.3 Calibration** (Figure 13). Gradient boosting's risks sit on the diagonal (Brier 0.179, the
-  lowest). Logistic regression bends around the diagonal.
-- **9.4 Subgroups.**
-  - Women and men get similar AUCs: 0.803 and 0.808.
-  - Discrimination falls with age: 0.835 under 50, 0.768 at 50–59, 0.718 at 60+.
-  - Risks stay calibrated in every group. At 60+, the 0.5 cut-off flags 88% of the sick but clears
-    only 35% of the healthy.
-- **9.5 Outside this dataset.** Here 76% of flagged patients really have CVD. In a population where
-  20% have CVD it would be 44% (36% at the screening cut-off), so a positive result means "examine
-  further", not a diagnosis.
-
-**§10 Using the model.** The notebook saves the final model with its two cut-offs and the clinical
-scorecard to `outputs/model.joblib`, and assesses three invented patients:
-
-| Patient | Predicted risk |
-|---|---|
-| 62-year-old man, 165/100 mmHg, BMI 33, high cholesterol | 87% |
-| 44-year-old woman, normal results | 14% |
-| 55-year-old woman, 130/85 mmHg | 59% |
-
-It also shows that an impossible reading (1400 mmHg) is rejected.
-
-**§11 Conclusion and limitations.**
-
-- **Answers to the three questions:**
-  - **Q1.** A real but small gain; the ceiling is set by the data.
-  - **Q2.** Handling matters more than the algorithm.
-  - **Q3.** The predictions are trustworthy, within limits.
-- **Limitations:**
-  1. It detects existing disease; it does not forecast.
-  2. The source and the diagnosis definition are undocumented. If the label includes hypertension,
-     part of blood pressure's power is circular.
-  3. Treatment is not recorded.
-  4. The 50/50 sample makes predictive values and risks sample-specific.
-  5. One dataset, no external validation.
-  6. Coarse lab values; diabetes had to be approximated from glucose.
-
-It ends with 12 references.
-
-### 2.2 The code inside the notebook
-
-The notebook contains all the code, as 52 code cells of about 1,200 lines. The functions are
-defined in the section where they are first used, and the cells after them call them by name, for
-example `clean(raw, "repair")` or `compare_models(train)`:
-
-| Code cell (where in the notebook) | Main functions | What they do |
-|---|---|---|
-| Setup (§1) | `BOUNDS`, `FEATURES`, `SEED=42`, `TEST_SIZE=0.2` | the plausibility bounds, the 15 model features, the fixed split |
-| Loading (§3) | `load`, `deduplicate` | read the CSV; drop exact duplicates (ignoring `id`) |
-| Data quality (§4.1) | `audit`, `repair_pressure`, `repair`, `clean`, `cleaning_summary` | flag implausible values; repair one blood pressure (sign → cmHg → extra digits), swap transposed pairs, log every change; build the raw/drop/repair datasets |
-| Features (§5) | `prepare`, `bp_stage`, `add_features`, `dataset`, `split_ids`, `train_test` | age in years, sex as `male`; BMI, pulse pressure, mean arterial pressure, ACC/AHA stage; the fixed patient-id split shared by every strategy |
-| Clinical baselines (§7.2) | `framingham_risk`, `framingham_design`, `diabetes_proxy` | the published Framingham 2008 equations (coefficients checked against two sources); the same terms per sex for refitting; glucose "well above normal" as the diabetes stand-in |
-| Models (§7.2) | `model_specs`, `compare_models`, `choose_model`, `feature_set_comparison`, `learning_curve_auc` | the five models and their grids; cross-validation of baselines and models on the same folds; the one-standard-error choice; the derived-feature check; the learning curve |
-| Evaluation (§8.1) | `classification_metrics`, `accuracy_threshold`, `bootstrap`, `interval`, `out_of_fold`, `screening_threshold` | AUC, accuracy, sensitivity, specificity; cut-offs chosen on training data; paired bootstrap confidence intervals |
-| Points score (§8.5) | `PointsScore`, `CLINICAL_FACTORS` | bands the factors, fits a logistic regression, rounds coefficients to whole points (1 point = 0.1 log-odds), maps the total back to a risk; the 4-factor clinical version |
-| Explanation (§8.4) | `grouped_permutation_importance`, `partial_dependence_curve` | the AUC drop when a group of related features is scrambled together; the average risk as one factor varies, with derived features recomputed |
-| Reliability (§9.1) | `strategy_comparison`, `smote`, `leakage_experiments`, `subgroup_table`, `ppv_at_prevalence` | the three cleaning strategies on one test set; a minimal SMOTE written out; the three deliberate mistakes; metrics by sex and age; predictive value at other prevalences |
-| Using the model (§10) | `final_estimator`, `build_final`, `save_final`, `load_final`, `patient`, `assess` | fit and save the model with both cut-offs and the clinical card; validate a new examination with the cleaning rules; return the risk, verdict, screening decision and points breakdown |
-
-Checking a new patient takes two lines (Section 10):
-
-```python
-bundle = load_final()     # the saved model, both cut-offs and the clinical scorecard
-assess(bundle, patient(age=62, sex="male", height=172, weight=98, systolic=165, diastolic=100, cholesterol=3))
+```
+cardio.py            all the code (the single source)
+report.md            the report's text + code cells, with markers for where the code sections go
+build_report.py      turns report.md into report.ipynb and executes it
+report.ipynb         the executed report (the deliverable)
+tests/               46 unit tests
+Dockerfile           Python 3.12 + pinned libraries
+requirements.txt     the pinned versions
+data/cardio.csv      the dataset
+presentation/        build.py, template, figures, the deck, script.md
+.github/workflows/   ci.yml (tests on every push), vm.yml (runs jobs on the VM)
 ```
 
-This returns a risk of 87%, the verdict "cardiovascular disease likely", "refer for examination" at
-the 0.38 screening cut-off, and 50 clinical points (+11 age 60+, +27 systolic 160+, +3 BMI 30–34.9,
-+9 cholesterol well above normal). An impossible reading such as `systolic=1400` raises
-`ValueError: implausible examination values: ap_hi out of range`.
+### 3.2 How the notebook is produced
 
-**How the notebook is built.** In the repository the code lives in one file, `cardio.py`, which the
-unit tests and the presentation build also use. `build_report.py` copies each section of that file
-into the notebook, at the markers in `report.md`. The notebook is then executed in a folder that does
-*not* contain `cardio.py`, so any hidden dependency on it would fail. This keeps one copy of the
-code while the submitted notebook stands alone. `cardio.py` also still offers a command line
-(`python cardio.py predict ...`), but that is not part of the submission.
+1. `report.md` is plain Markdown. Text becomes Markdown cells and every ```python block becomes a code
+   cell. A line like `<!-- code: data quality -->` is replaced by the matching section of `cardio.py`,
+   which is split at its banner comments.
+2. `build_report.py` assembles the notebook and **executes it in a folder without `cardio.py`**. So
+   any hidden dependency on the file would fail. It also refuses `import cardio`, and fails if fewer
+   figures are embedded than the code draws.
+3. The result is `report.ipynb`: text, code and outputs, self-contained.
 
-### 2.3 `Cardio-Risk.pptx`: the presentation
+This is why the submitted notebook shows every line of code, while the repository keeps only one copy
+of it.
 
-A 10-minute talk: 15 main slides plus 3 backup slides.
+### 3.3 Where the computation ran
 
-- **Template:** built by `presentation/build.py` from the Slidesgo "Child Meningitis Case Study"
-  template (the same one as your questionnaire defense), with its green recoloured to a cardiac red.
-- **Transitions:** Morph on every slide. On slide 11 the model bars from slide 7 grow into the
-  inflated "leakage" bars.
-- **Script:** speaker notes on every slide hold the spoken script. The same text is in
-  `presentation/script.md`: 1,147 words, about 8 minutes at 140 words a minute.
+- **The VM.** Everything ran on **dblp-vm**, inside a Docker container capped at 4 GB of memory and
+  4 CPUs. The VM has no swap and also serves your dblp and AutoML sites, so a runaway job must die
+  alone.
+- **The workflow.** `vm.yml` copies the code to the VM over SSH (using three repository secrets and a
+  dedicated key, `cardio-risk-deploy`), builds the image there, runs the report (about 9 minutes),
+  and returns the outputs as a downloadable artifact.
+- **CI.** `ci.yml` runs the 46 tests on every push, in about a minute.
 
-| # | Slide | Message |
+### 3.4 How it progressed
+
+1. Read the brief and profiled all five datasets, then chose cardio.
+2. Checked the literature, found the 73% versus 88–94.5% gap, and adopted Q1–Q3.
+3. Built the repository, Docker image, tests and VM workflows, and set up VM access.
+4. Cleaning: inspected the impossible values, found four typing-error patterns, wrote drop and repair.
+5. Exploration on training patients: four strong factors and the smoking paradox.
+6. Features; then models. The first VM run put two models' best settings at grid edges, so the grids
+   were widened; nothing changed beyond the 4th decimal.
+7. Test evaluation, explanations and the points score; the clinical card was added after lifestyle
+   factors earned negative points.
+8. Reliability: cleaning strategies, leakage, calibration, subgroups, predictive value.
+9. The patient check (Section 10); then the deck, rendered and fixed slide by slide.
+10. **Bugs caught before submission:**
+    - **No figures in the notebook.** A Docker setting (`MPLBACKEND=Agg`) stopped plots from being
+      embedded. Removed, and the build now checks for it.
+    - **Scipy warnings.** A too-new scipy warned on every fit; it is now pinned.
+    - **A rough tool.** The command line printed raw column names and crashed on bad input; both fixed.
+11. Notebook-only submission: the code was moved inside the notebook. Actions ran out, you made the
+    repository public, and the final run was executed.
+
+---
+
+## Part 4 — The notebook, cell by cell
+
+The notebook has **91 cells: 39 text and 52 code**. Below, every code cell is listed with what it does,
+how, and what it shows. "§" numbers are the report's sections.
+
+### §1 Introduction — the problem, the objective, the three questions
+
+**Cell 1 — Setup (imports and constants).**
+
+- **Imports:** `math`, `os`, `Path`, `numpy`, `pandas`.
+- **Finds the project folder** by looking for `data/cardio.csv` in the current folder and its
+  parents, and sets `ROOT`, `DATA`, `OUTPUTS`.
+- **Fixes the constants used everywhere:**
+  - `SEED = 42` and `TEST_SIZE = 0.2`: the split.
+  - `TARGET = "cardio"`.
+  - `BOUNDS` and `BMI_BOUNDS`: the plausibility limits.
+  - `STRATEGIES = ("raw", "drop", "repair")`.
+  - `BASE_FEATURES`: the 11 recorded values, with age in years and sex as `male`.
+  - `DERIVED_FEATURES`: BMI, pulse pressure, mean arterial pressure, BP stage.
+  - `FEATURES`: all 15 together.
+- No output.
+
+**Cell 2 — Plot style.** Imports matplotlib, creates `outputs/figures`, and sets one look for every
+chart: thin marks, light grid, blue for no-CVD and orange for CVD. Every figure is also saved as a PNG
+there. No output.
+
+### §2 Evaluation protocol — text only
+
+The seven rules fixed before any model: deduplicate first; one split; cleaning learns nothing; choose
+on cross-validation; one common test set; the metrics; leakage experiments kept apart.
+
+### §3 The data
+
+**Cell 3 — `load`, `deduplicate`.**
+
+- `load()` reads the CSV exactly as distributed.
+- `deduplicate()` drops records identical in every column except `id`, keeping the first.
+
+**Cell 4 — First look.** `raw = load()` prints "70,000 records, 13 columns" and shows the first five
+rows.
+
+**Cell 5 — `raw.describe()`.** Summary statistics for every column. The impossible values show up
+here: `ap_hi` runs from −150 to 16,020, height from 55 cm, weight from 10 kg.
+
+**Cell 6 — Balance and coding.** Prints:
+
+- the target balance: 50/50;
+- missing values: 0;
+- mean height by gender code: 161.4 cm for code 1, 169.9 cm for code 2, so 2 = male.
+
+### §4 Data quality
+
+**Cell 7 — Bounds table.** Shows the plausibility bounds as a table.
+
+**Cell 8 — Cleaning code** (104 lines):
+
+- `bmi(df)`: weight / height².
+- `audit(df)`: one True/False column per check (each value out of range; diastolic ≥ systolic; BMI
+  out of range).
+- `repair_pressure(value, lo, hi)`: the repair rules for one reading, in order:
+  - **sign**: −120 → 120;
+  - **cmHg**: 12 → 120, only if the result is in range;
+  - **extra digits**: divide by 10 until in range, so 1000 → 100, 14020 → 140, 906 → 90;
+  - anything else becomes "unrecoverable".
+- `repair(df)`: applies that to both pressures, swaps pairs typed the wrong way round (80/120 →
+  120/80), and logs every change (id, field, before, after, rule).
+- `clean(df, strategy)`:
+  - `raw` = deduplicate only;
+  - `drop` = deduplicate, then remove any record failing a check;
+  - `repair` = deduplicate, repair, then remove what still fails.
+- `cleaning_summary(df)`: records kept, repaired and removed per strategy.
+
+**Cell 9 — The audit.** Prints "24 exact duplicates removed" and "1,395 records (2.0%) fail at least
+one check". It also shows how many fail each check: systolic out of range 229, diastolic 1,034,
+diastolic ≥ systolic 1,236, height 53, weight 7, BMI 44.
+
+**Cell 10 — The most frequent impossible values**, for each pressure. For example diastolic 1000
+(666 times) and 1100 (156), and systolic 12 (76), 14 (29), 11 (28).
+
+**Cell 11 — Swapped pairs.** The most common "diastolic ≥ systolic" combinations, for example
+150/1000 and 12/80.
+
+**Cell 12 — Figure 1.** Two scatter plots of every patient's blood-pressure pair:
+
+- **left:** as recorded, on a log scale, with the failing records in red, scattered far from the
+  real cluster;
+- **right:** after repair, with the 1,257 repaired patients in orange inside the normal cloud.
+
+**Cell 13 — Contradictory records.** "17 groups of records identical in every feature but with
+different diagnoses". They are kept: no model can classify all of them correctly.
+
+**Cell 14 — The three strategies.** A table of records per strategy:
+
+| Strategy | Records | Notes |
 |---|---|---|
-| 1 | Title | name, Lebanese University (course and instructor left out: the brief doesn't name them) |
-| 2 | Why this matters | 17.9 million deaths a year; the objective; Q1–Q3 |
-| 3 | The data | 70,000 patients, 11 values, 50/50; measured / lab / self-reported |
-| 4 | 2% of the records are impossible | the four error patterns; r = 0.05 → 0.43 |
-| 5 | What the clean data shows | disease rate by factor (Figure 2) |
-| 6 | The smoking paradox | the sick quitter; detection not prediction; associations not causes |
-| 7 | What machine learning adds | test accuracy of every candidate on one axis |
-| 8 | On patients the model has never seen | AUC 0.804, 73.6%, +301 patients; ROC curves |
-| 9 | What drives the prediction | importance bars; blood pressure as a switch |
-| 10 | A score a doctor can add up | the 4-factor scorecard and points → risk |
-| 11 | How 90% accuracy happens | the leakage bars; the published 88% and 94.5% marked |
-| 12 | Can the predictions be trusted? | calibration; sexes; over 60; 44% at 20% prevalence |
-| 13 | Checking a new patient | the notebook call and its real output; a rejected reading |
-| 14 | Conclusions | Q1–Q3 answers and limitations |
-| 15 | Thank you | questions; template credit |
-| 16–18 | Backup | full test table; cleaning strategies; subgroups |
+| raw | 69,976 | duplicates removed only |
+| drop | 68,581 | 98.0% kept |
+| repair | 69,838 | 1,257 repaired, 138 removed |
 
-### 2.4 `data/cardio.csv`
+**Cell 15 — The repair log.** Counts by field and rule (e.g. diastolic "extra digits" 950, systolic
+"cmHg" 179, "swapped" 94, unrecoverable 73), with three examples of each rule.
 
-The dataset exactly as distributed in the course zip (Kaggle, Ulianova 2019): 70,000 rows and
-13 columns, unchanged. All cleaning happens in code, so the original file is never edited.
+**Cell 16 — What cleaning changes.** The correlation between systolic pressure and the diagnosis is
+**0.054 raw, 0.428 dropped, 0.432 repaired**. The maximum systolic is 16,020 raw and 240 cleaned.
+Under 2% of the records hide the strongest predictor.
 
-### 2.5 `requirements.txt`
+### §5 Exploratory data analysis (training patients only)
 
-These are the exact versions the results were produced with. scipy, joblib and threadpoolctl are
-pinned because a newer scipy printed a warning on every logistic regression fit.
+**Cell 17 — Feature and split code:**
 
-| Library | Version |
+- `prepare`: age days → years; `male` = gender 2.
+- `bp_stage`: the ACC/AHA 2017 category, the higher of the systolic and diastolic categories:
+  - normal: below 120/80;
+  - elevated: 120–129 systolic and below 80 diastolic;
+  - stage 1: 130–139 or 80–89;
+  - stage 2: 140+ or 90+.
+- `add_features`: BMI, pulse pressure (systolic − diastolic), mean arterial pressure
+  ((systolic + 2 × diastolic) / 3), and the stage.
+- `dataset(strategy)`: load → clean → prepare → add features.
+- `split_ids`: the stratified 80/20 split of patient ids, seed 42, drawn from the deduplicated raw
+  data so every strategy shares it.
+- `train_test(strategy)`: the modelling table divided by those ids.
+
+**Cell 18 — The split.** Prints: training patients 54,859, test patients 13,722 (the drop version);
+49.5% with CVD; age 30–65, median 54; 35% men.
+
+**Cell 19 — Figure 2:** six bar charts of the share with CVD by group. The dashed line is the overall
+rate.
+
+| Factor | Disease rate from lowest to highest group |
 |---|---|
-| numpy | 2.2.4 |
-| pandas | 2.2.3 |
-| scikit-learn | 1.6.1 |
-| scipy | 1.15.3 |
-| joblib | 1.4.2 |
-| threadpoolctl | 3.5.0 |
-| matplotlib | 3.10.0 |
-| nbformat | 5.10.4 |
-| nbconvert | 7.16.6 |
-| ipykernel | 6.29.5 |
-| pytest | 8.3.5 |
+| Age | 23% (<40) → 66% (60+) |
+| Systolic pressure | 23% (<120) → 86% (160+) |
+| BMI | 26% → 68% |
+| Cholesterol | 44% → 76% |
+| Glucose | 47% → 62% |
 
----
+Lifestyle: smokers 47% vs 50%; drinkers 48% vs 50%; inactive 53% vs active 49%.
 
-## 3. What we did, in order
+**Cell 20 — Figure 3, the smoking paradox.** Prints "share who smoke": women 1.8%, men 21.9%. Then,
+for men only, CVD rate by age group for smokers and non-smokers. Smokers are lower in every group
+(e.g. 44% vs 49% at 50–54).
 
-### Step 1: reading the brief and choosing the dataset
+- **Explanation:** diagnosis and answers come from the same visit, so diagnosed patients have often
+  quit: the "sick quitter".
+- **Consequences:** this is detection, not prediction; effects are associations, not causes.
 
-We profiled all five datasets with pandas before choosing:
+**Cell 21 — Figure 4, correlation heatmap.** The strongest pairs: systolic–diastolic 0.73,
+weight–BMI 0.86, male–height 0.52. With CVD: systolic 0.43, diastolic 0.34, age 0.24, cholesterol
+0.22, BMI 0.19; sex and lifestyle about 0.
 
-| Dataset | Finding | Verdict |
+### §6 Feature engineering
+
+**Cell 22 — Figure 5.** Disease rate by ACC/AHA stage:
+
+| Stage | Disease rate |
+|---|---|
+| normal | 22% |
+| elevated | 32% |
+| stage 1 | 38% |
+| stage 2 | 78% |
+
+The stage 1 group is large because 120/80, the most common reading, counts as stage 1 (a diastolic of
+80 starts stage 1).
+
+### §7 Models
+
+**Cell 23 — Framingham code:**
+
+- `FRAMINGHAM`: the published 2008 office-based coefficients for women and men (age, BMI, systolic,
+  smoking, diabetes, baseline survival, mean).
+- `diabetes_proxy`: glucose "well above normal", since the data has no diabetes field.
+- `framingham_risk`: the published 10-year risk, with nothing fitted. A hand check: a man of 50, BMI
+  25, 120 mmHg comes out at 8.48%.
+- `framingham_design`: the same terms per sex, so a logistic regression can refit the formula.
+
+**Cell 24 — Model code** (153 lines):
+
+- `model_specs()`: each model and its grid:
+
+  | Model | Grid searched |
+  |---|---|
+  | Framingham form | — |
+  | Logistic regression | C ∈ {0.01, 0.1, 1, 10} |
+  | Random forest | leaf size {10, 30, 100} × features per split {√, 0.5} |
+  | Gradient boosting | learning rate {0.01, 0.03, 0.1} × leaves {7, 15, 31} × leaf size {20, 50, 200}, early stopping |
+  | MLP | layers {(32), (64, 32), (128, 64)} × weight decay {1e-5, 1e-4, 1e-2} |
+
+- `classification_metrics`: AUC, accuracy, sensitivity, specificity.
+- `accuracy_threshold`: the most accurate cut-off on training data.
+- `compare_models`: scores the 3 baselines and runs a grid search for each model, all on the same
+  5 folds.
+- `choose_model`: the one-standard-error rule.
+- `feature_set_comparison`: models with and without derived features.
+- `learning_curve_auc`: AUC as the number of training patients grows.
+
+**Cell 25 — Running the comparison.** It takes about 4–5 minutes on the VM. The table:
+
+| Model | CV AUC | Accuracy |
 |---|---|---|
-| Water potability (3,276) | no signal: class means identical, every correlation with the label below 0.035 | rejected: a model can barely beat guessing |
-| **Cardio (70,000)** | real but modest signal, real data errors to fix, medical meaning | **chosen** |
-| Email spam (5,172 × 3,000 word counts) | Enron emails; words like "enron" and "hpl" never appear in spam (a shortcut); 541 duplicate rows; 97%+ is easy | rejected: too easy, no raw text |
-| Loan eligibility (614) | the single rule "credit history = 1" is already 80.9% accurate | rejected: tiny, one column decides |
-| Credit-card segmentation (8,950) | clustering only, no labels | runner-up: hard to defend without a correct answer |
+| Gradient boosting | 0.8005 | 73.5% |
+| Random forest | 0.7992 | 73.3% |
+| MLP | 0.7986 | 73.3% |
+| Logistic regression | 0.7902 | 72.7% |
+| Framingham refitted | 0.7798 | 71.8% |
+| Systolic alone | 0.7506 | 71.3% |
+| Rule ≥ 130 | 0.7121 | 71.3% |
+| Framingham published | 0.6962 | 65.2% |
 
-### Step 2: validating the idea against the literature
+The cut-off the data chooses for systolic pressure alone is exactly 130 mmHg in every fold, the
+guideline's own value.
 
-- **What careful studies get.** About 73% on this dataset (CatBoost 0.734, arXiv 2507.21898), close
-  to our 71.3% rule. So the realistic gain from ML is small.
-- **What some papers claim.** 88.09% (Omkari and Shaik, IEEE Access 2024) and 94.5% (Zafar et al.,
-  Systems and Soft Computing 2026). That is very hard to reconcile with ~73%, which suggests leakage.
-- **A precedent for the check.** A published comment (Eltawil et al., JCDD 2026) showed a 99% claim
-  on another CVD dataset fall to 77% once SMOTE was moved after the split.
-- **Validity issues found:**
-  - The task is detection, not prediction.
-  - Patients may already be on treatment.
-  - The 50/50 balance is not real-world prevalence.
-  - The source is undocumented.
-- **Result.** The plan grew from "train models" into the three questions Q1–Q3.
+**Cell 26 — Figure 6.** The same results as dots with error bars, baselines in grey and models in blue.
 
-### Step 3: keeping it the project the brief asks for
+**Cell 27 — Do derived features help?** For gradient boosting the AUC changes by +0.0003; for logistic
+regression by −0.0005. No.
 
-You asked that the result still read as the project described: a model that detects the disease. So
-the report follows the conventional structure (data → cleaning → EDA → features → models → evaluation
-→ use → conclusion). The research questions live inside the evaluation and reliability sections,
-and §10 gives a working tool.
+**Cell 28 — Figure 7, learning curve.** AUC against the number of training patients, from 438 to
+43,887.
 
-### Step 4: infrastructure, with all computation on dblp-vm
+- Logistic regression is flat from about 2,000 patients.
+- Gradient boosting overtakes it there, and gains only 0.0015 from 22k to 44k patients.
+- So more data of this kind won't help.
 
-- **Repository.** Private, `hadigghazi/cardio-risk`.
-- **Docker image.** Python 3.12 with the pinned libraries.
-- **Tests.** 43 unit tests (26 test functions, some parametrised).
-- **CI on GitHub.** On every push, GitHub's runner builds the image and runs the tests (about 50 s).
-  On pushes to main it then calls the VM workflow.
-- **The VM workflow** (`vm.yml`), modelled on the dblp project:
-  - It SSHes into dblp-vm with three repo secrets.
-  - It copies the commit there, builds the image on the VM, and runs the report in a container
-    capped at 4 GB memory and 4 CPUs. The VM has no swap and also serves the dblp and AutoML sites,
-    so a runaway job must die alone.
-  - It sends the outputs back as a downloadable artifact.
-- **Access setup.**
-  - A dedicated SSH key (`cardio-risk-deploy`) was created. Auto mode blocked me from writing secrets,
-    so you set them with `gh`.
-  - First attempt: the pasted commands ran into ssh-keygen's passphrase prompt, so nothing was set.
-  - Second attempt: the key's fingerprint was pasted into `authorized_keys` instead of the key.
-  - Third attempt: the real key line was added, and the connection worked.
-  - Lines 6–7 of `authorized_keys` are harmless leftovers from those attempts.
+**Cell 29 — The choice.** Prints: best AUC is gradient boosting, 0.8005 ± 0.0026; one standard error
+is 0.0012; chosen: **gradient boosting** (learning rate 0.01, 15 leaves, at least 50 patients per
+leaf).
 
-### Step 5: cleaning
+### §8 The final model on the test set
 
-We inspected the impossible values and found the four typing-error patterns. We wrote the rules,
-`drop` and `repair`, and tested them. Then we confirmed the effect on the correlation: 0.054 → 0.428.
+**Cell 30 — Evaluation helpers:**
 
-### Step 6: exploration and features
+- `bootstrap`: resamples the test patients 2,000 times, the same resamples for all models.
+- `interval`: the 2.5–97.5 percentiles.
+- `out_of_fold`: each training patient's risk from a model that didn't see them.
+- `screening_threshold`: the highest cut-off still catching 80% of the sick.
 
-The training-only analysis found the four strong factors, the weak lifestyle answers, and the
-smoking paradox. We then added the four derived features.
+**Cell 31 — Every candidate on the test set.** Each model is scored once (the table is also saved to
+`outputs/test_results.csv`):
 
-### Step 7: models
+| Model | Test AUC (95% CI) | CV AUC | Accuracy | Sensitivity | Specificity |
+|---|---|---|---|---|---|
+| **Gradient boosting** | **0.804 (0.797–0.811)** | 0.801 | **73.6%** | 68.9% | 78.2% |
+| Random forest | 0.803 (0.796–0.810) | 0.799 | 73.4% | 68.5% | 78.1% |
+| MLP | 0.803 (0.795–0.810) | 0.799 | 73.4% | 71.0% | 75.7% |
+| Logistic regression | 0.793 (0.785–0.800) | 0.790 | 72.6% | 66.8% | 78.2% |
+| Framingham refitted | 0.780 (0.773–0.788) | 0.780 | 71.4% | 66.3% | 76.3% |
+| Systolic alone | 0.754 (0.746–0.761) | 0.751 | 71.3% | 61.8% | 80.6% |
+| Rule ≥ 130 | 0.712 (0.704–0.719) | 0.712 | 71.3% | 61.8% | 80.6% |
+| Framingham published | 0.693 (0.684–0.701) | 0.696 | 64.6% | 74.0% | 55.5% |
 
-- **Verifying the Framingham coefficients.** We checked them against two sources and by hand: a
-  50-year-old man with BMI 25 and 120 mmHg comes out at 8.48%.
-- **The first VM run.** It placed the best settings of gradient boosting and the MLP at the edge of
-  their search grids. A best value at the edge means a better one might lie beyond it.
-- **Widening the grids.** The results moved by under 0.0005, so the models had reached the ceiling.
+Every test AUC is within 0.004 of its CV AUC, so nothing overfitted.
 
-### Step 8: test evaluation, explanation, scorecard
+**Cell 32 — Figure 8, ROC curves** for gradient boosting, logistic regression, systolic alone and
+Framingham, with the rule shown as one point.
 
-We scored every candidate once on the test patients, with bootstrap intervals. We added the screening
-cut-off, the grouped permutation importance and the partial dependence.
+**Cell 33 — The gain in patients.** At the rule's specificity (80.6%), the rule detects 61.8% of the
+sick and the model 66.2%: **301 more of the 6,785 diseased test patients**, with no extra false alarms.
 
-The points score earned negative points for lifestyle factors, so the clinical 4-factor card was
-added. It turned out to lose almost nothing.
+**Cell 34 — Are the differences real?** Gradient boosting minus each other model, with 95% intervals:
 
-### Step 9: reliability
+| Comparison | AUC difference | 95% interval |
+|---|---|---|
+| vs random forest | +0.0015 | +0.0002 to +0.0028 |
+| vs MLP | +0.0018 | +0.0001 to +0.0036 |
+| vs logistic regression | +0.0119 | +0.0094 to +0.0144 |
+| vs Framingham refitted | +0.0239 | |
+| vs systolic alone | +0.0504 | |
 
-We trained on the three cleaning strategies, ran the three leakage experiments, and checked
-calibration, subgroups and predictive value at realistic prevalence.
+All exclude zero, but the first two are clinically meaningless.
 
-### Step 10: the tool
+**Cell 35 — Figure 9, two cut-offs.** Confusion matrices:
 
-`train` and `predict` were added. The tool uses the clinical card, prints readable labels, and gives
-a one-line rejection for impossible values instead of a crash.
+| Cut-off | Sick missed | Healthy flagged | Sensitivity | Specificity |
+|---|---|---|---|---|
+| 0.50 | 2,112 | 1,510 | 68.9% | 78.2% |
+| 0.38 (screening) | 1,347 | 2,476 | 80.1% | 64.3% |
 
-### Step 11: the presentation
+The screening cut-off was chosen on training data and hits its 80% target on unseen patients.
 
-- **Format.** You chose PowerPoint, about 10 minutes.
-- **How it's built.** The build script follows your earlier decks: template layouts, the template's
-  own medical icons, Morph, and notes timed at 140 words a minute.
-- **Numbers that can't drift.** The build reads the scorecard and the patient example from the
-  saved model. It refuses an outdated model unless run with `--draft`.
-- **QA.** Every slide was rendered through PowerPoint and inspected, and the obvious problems were
-  fixed: two titles that wrapped, overlapping labels on the leakage slide, a chart too small to read
-  (redrawn as native bars), and a duplicated credit line. The file passed the PowerPoint validator,
-  with no leftover template text.
+**Cell 36 — Explanation code:**
 
-### Step 12: bugs caught before submission
+- `FEATURE_GROUPS`: blood pressure (5 features), age, body size (height, weight, BMI), cholesterol,
+  glucose, activity, smoking, alcohol, sex.
+- `grouped_permutation_importance`: shuffles each group together, 10 times, and measures the AUC drop.
+- `partial_dependence_curve`: sets one factor to each value for everyone (recomputing BMI and the
+  pressures so no impossible combination appears) and averages the predicted risk.
 
-1. **No figures in the notebook.** The Docker image set `MPLBACKEND=Agg`, which silently stopped
-   Jupyter embedding plots. The figure files existed, but the report had no charts. We removed the
-   setting, and the build now fails if fewer figures are embedded than the report draws. The final
-   notebook has all 13.
-2. **Scipy warnings.** A newer scipy than scikit-learn 1.6.1 expects warned on every fit; it is now
-   pinned.
-3. **A rough command-line tool.** It printed raw column names and crashed on bad input; both fixed.
+**Cell 37 — Figure 10, what the model relies on.** AUC drop when each group is scrambled:
 
-### Step 13: one notebook instead of a notebook and a .py file
+| Group | AUC drop |
+|---|---|
+| Blood pressure | 0.210 |
+| Age | 0.036 |
+| Cholesterol | 0.030 |
+| Body size | 0.007 |
+| Activity | 0.002 |
+| Glucose | 0.002 |
+| Smoking | 0.001 |
+| Alcohol | 0.001 |
+| Sex | 0.000 |
 
-You confirmed the brief means *either* format, so we submit the notebook alone. Every section of
-`cardio.py` now appears as code inside the notebook, and the command line was dropped from the
-submission. Section 10 and slide 13 now show the check inside the notebook.
+**Cell 38 — Figure 11, partial dependence** for eight factors (3,000 test patients):
 
-At the same time, the account's GitHub Actions allowance ran out ("spending limit"), so no job could
-start. Following the rule from the groundtruth project, CI now runs only the tests on push, and the
-report runs on demand. You then made the repository public, which makes Actions free, and the
-notebook was re-run on the VM.
+- **Systolic pressure works like a switch:** about 31–39% below 125 mmHg, a steep jump to about 84% by
+  150 mmHg, then flat. This is why trees beat a straight-line model.
+- **Steady rises:** age 38% → 65%; weight rises gently; cholesterol "well above" adds about 25 points.
+- **Flat or slightly protective:** glucose, smoking and alcohol (reverse causation).
 
-### Step 14: packaging
+**Cell 39 — `PointsScore` code** (the scorecard):
 
-The final VM run's notebook was checked: 79 cells, 41 code cells executed, 13 figures, 0 errors.
-Its test results match the run the deck was built from. It was committed to the repo, and the zip
-was assembled.
+- **Bands:** age <45 / 45–49 / 50–54 / 55–59 / 60+; systolic <120 / 120–129 / 130–139 / 140–159 /
+  160+; BMI <25 / 25–30 / 30–35 / 35+; three levels for cholesterol and glucose; yes/no for the
+  lifestyle answers.
+- **Fitting:** a logistic regression on the bands. Each coefficient is divided by 0.1 and rounded, so
+  one point = 0.1 in log-odds.
+- **Mapping:** a one-variable logistic regression turns the total into a risk.
+- `CLINICAL_FACTORS` = age, systolic, BMI, cholesterol.
+
+**Cell 40 — The full scorecard.** Systolic earns up to 27 points, age up to 11, cholesterol up to 11,
+BMI up to 4. **Smoking −2, alcohol −2, active −2 and high glucose −3**: negative points, from reverse
+causation.
+
+**Cell 41 — Figure 12.** The full scorecard reaches test AUC 0.795 (0.788–0.803) and 72.5% accuracy,
+0.009 below gradient boosting. The figure plots total points against the observed share with CVD,
+which follows the score's curve.
+
+**Cell 42 — The clinical scorecard** (4 factors):
+
+| Factor | Points by band |
+|---|---|
+| Age | <45 0, 45–49 4, 50–54 5, 55–59 8, 60+ 11 |
+| Systolic | <120 0, 120–129 5, 130–139 13, 140–159 25, 160+ 27 |
+| BMI | <25 0, 25–30 2, 30–35 3, 35+ 4 |
+| Cholesterol | normal 0, above 3, well above 9 |
+
+**AUC 0.793, accuracy 72.3%**: the same as logistic regression on all 15 features, and 0.011 below
+the best model. In risk terms: 0 points ≈ 13%, 10 ≈ 28%, 20 ≈ 52%, 30 ≈ 74%, 40 ≈ 89%.
+
+### §9 Reliability
+
+**Cell 43 — Reliability code:**
+
+- `strategy_comparison`: trains on raw, drop or repair, and tests on the common test patients.
+- `smote`: a minimal SMOTE, written out in 15 lines. It interpolates between a patient and one of its
+  5 nearest same-class neighbours.
+- `leakage_experiments`: the correct pipeline plus three mistakes.
+- `subgroup_table`: metrics by sex and age group.
+- `ppv_at_prevalence`: the share of flagged patients who are really sick, at another disease rate.
+
+**Cell 44 — Cleaning strategies:**
+
+| Trained on | Gradient boosting AUC | Logistic regression AUC |
+|---|---|---|
+| raw | 0.804 | **0.776** |
+| drop | 0.804 | 0.793 |
+| repair | 0.805 | 0.793 |
+
+Trees ignore absurd values, since they only split on order. Logistic regression is pulled by them.
+
+**Cell 45 — Leakage experiments** (about 2.5 minutes):
+
+| Pipeline | Model | "Reported" accuracy |
+|---|---|---|
+| Correct | gradient boosting | 73.6% |
+| Mistake 1: accuracy on the training patients | fully grown random forest | **99.9%** (71.0% on unseen patients) |
+| Mistake 2: SMOTE before the split | 1-nearest neighbour | **85.3%** |
+| Mistake 2: SMOTE before the split | random forest | **86.7%** |
+| SMOTE done correctly | same models | 64.0% / 70.5% |
+| Mistake 3: luckiest of 50 random splits | logistic regression | 73.4% (median 72.8%) |
+
+**Cell 46 — Figure 13, calibration.** Predicted against observed risk in 10 groups. Gradient boosting
+lies on the diagonal (Brier 0.179, the best); logistic regression bends around it (0.187); the points
+score is close (0.185).
+
+**Cell 47 — Subgroups:**
+
+| Group | AUC | Mean predicted | Observed |
+|---|---|---|---|
+| Women | 0.803 | 48.7% | 49.2% |
+| Men | 0.808 | 50.7% | 49.9% |
+| Under 50 | 0.835 | | |
+| 50–59 | 0.768 | | |
+| 60+ | 0.718 | | |
+
+At 60+, the 0.5 cut-off catches 88% of the sick but clears only 35% of the healthy.
+
+**Cell 48 — Positive predictive value at other disease rates:**
+
+| Share with CVD | Accuracy cut-off | Screening cut-off |
+|---|---|---|
+| 50% (this data) | 76% | 69% |
+| 30% | 58% | 49% |
+| 20% | 44% | 36% |
+| 10% | 26% | 20% |
+| 5% | 14% | 11% |
+
+### §10 Using the model
+
+**Cell 49 — Code for checking a patient:**
+
+- `FINAL_PARAMS`: the chosen setting.
+- `build_final`: fits the model, finds the screening cut-off, and fits the clinical scorecard.
+- `save_final` and `load_final`: write and read `outputs/model.joblib`.
+- `patient(...)`: checks a new examination with the same plausibility rules and builds its features.
+  It raises `ValueError` for impossible values.
+- `assess(bundle, row)`: returns the risk, the verdict, the screening decision and the points
+  breakdown.
+
+**Cell 50 — Save the model.** It first checks that the model's settings equal `FINAL_PARAMS`, then
+saves it and prints "screening cut-off: 0.382".
+
+**Cell 51 — Three invented patients:**
+
+| Patient | Risk | Decision | Points (risk) |
+|---|---|---|---|
+| 62-year-old man, 165/100, BMI 33, cholesterol well above normal | 87% | likely, refer | 50 (95%) |
+| 44-year-old woman, 115/75, BMI 22, all normal | 14% | unlikely, no referral | 0 (13%) |
+| 55-year-old woman, 130/85, BMI 27, cholesterol above normal | 59% | likely, refer | 26 (66%) |
+
+**Cell 52 — An impossible reading.** Systolic 1400 prints "rejected: implausible examination values:
+ap_hi out of range".
+
+### §11 Conclusion — text only
+
+- **The three answers:**
+  - **Q1.** A real but small gain; the ceiling is set by the data.
+  - **Q2.** Data handling matters more than the algorithm.
+  - **Q3.** Trustworthy, within limits.
+- **Six limitations:**
+  1. Detection, not prediction.
+  2. Unknown source and diagnosis definition. If hypertension counts as CVD, part of blood pressure's
+     power is circular.
+  3. No treatment data.
+  4. A 50/50 sample.
+  5. One dataset, no external validation.
+  6. Coarse lab values, and a diabetes stand-in.
+- **12 references.**
 
 ---
 
-## 4. Concepts you may need to explain
+## Part 5 — The results in one place
 
-- **ROC AUC.** The probability that the model gives a randomly chosen sick patient a higher risk than
-  a randomly chosen healthy one. 0.5 is chance and 1.0 is perfect. It doesn't depend on any cut-off,
-  which is why it is the primary metric.
+| Question | Answer | Evidence |
+|---|---|---|
+| How good is the model? | AUC 0.804 (0.797–0.811), accuracy 73.6% on 13,722 unseen patients | cell 31 |
+| Better than the rule? | +2.3 points of accuracy; +301 of 6,785 sick found at the rule's specificity | cells 31, 33 |
+| Better than Framingham? | Published Framingham does worse than blood pressure alone (0.693); refitted it reaches 0.780 | cells 25, 31 |
+| Which algorithm? | Gradient boosting, but random forest and the MLP are practically tied; logistic regression is 0.012 behind | cells 25, 34 |
+| Would more data help? | No: the learning curve is flat | cell 28 |
+| What drives it? | Blood pressure (AUC drop 0.210), then age and cholesterol; risk jumps between 125 and 150 mmHg | cells 37–38 |
+| Simple alternative? | 4-factor scorecard: AUC 0.793, 72.3% | cell 42 |
+| Does cleaning matter? | For logistic regression yes (0.776 → 0.793); for trees no | cells 16, 44 |
+| How do 88–94% claims arise? | Leaky evaluation gives 85–100% from the same data | cell 45 |
+| Are risks trustworthy? | Calibrated (Brier 0.179); equal for both sexes; weaker over 60 | cells 46–47 |
+| In a real population? | At 20% prevalence, 44% of flagged patients are sick | cell 48 |
+
+---
+
+## Part 6 — The deliverables
+
+### 6.1 The zip
+
+`submission/Hadi-Ghazi_Patient-Sickness-Prediction.zip` (5 MB):
+
+| File | What it is |
+|---|---|
+| `report.ipynb` | the report and **all** the code, executed: 91 cells (52 code), 13 figures, no errors |
+| `Cardio-Risk.pptx` | the presentation: 15 slides + 3 backup, speaker notes |
+| `data/cardio.csv` | the original dataset, unchanged (all cleaning is in code) |
+| `requirements.txt` | numpy 2.2.4, pandas 2.2.3, scikit-learn 1.6.1, scipy 1.15.3, joblib 1.4.2, threadpoolctl 3.5.0, matplotlib 3.10.0, nbformat 5.10.4, nbconvert 7.16.6, ipykernel 6.29.5, pytest 8.3.5 |
+
+- **No `.py` file.** The brief accepts either format, and the notebook contains all the code.
+- **To re-run it:** open `report.ipynb` with `data/cardio.csv` beside it (or in a parent folder) and run
+  all. It takes about 9–10 minutes; the model comparison and the leakage experiments take most of
+  that.
+
+### 6.2 The presentation, slide by slide
+
+10 minutes. Morph transitions throughout; the bars of slide 7 grow into the leakage bars of slide 11.
+The spoken script (1,151 words, about 8 minutes) is in the speaker notes and in
+`presentation/script.md`.
+
+| # | Title | What it shows / what you say |
+|---|---|---|
+| 1 | Detecting Cardiovascular Disease from a Routine Check-up | your name, Lebanese University; the question |
+| 2 | Why this matters | 17.9 million deaths a year; the objective; Q1–Q3 |
+| 3 | The data: 70,000 check-ups | 70,000 / 11 / 50-50; measured, lab and self-reported values; source undocumented |
+| 4 | 2% of the records are impossible | Figure 1; the four typing-error patterns; r = 0.05 → 0.43 |
+| 5 | What the clean data shows | Figure 2: blood pressure, age, weight, cholesterol |
+| 6 | The smoking paradox | Figure 3; the sick quitter; detection not prediction; associations not causes |
+| 7 | What machine learning adds | test accuracy and AUC of every candidate on one axis |
+| 8 | On patients the model has never seen | 0.804, 73.6%, +301; ROC curves |
+| 9 | What drives the prediction | importance bars; blood pressure as a switch |
+| 10 | A score a doctor can add up | the 4-factor scorecard and its points-to-risk table |
+| 11 | How 90% accuracy happens | leakage bars; the published 88% and 94.5% marked |
+| 12 | Can the predictions be trusted? | calibration; women vs men; over 60; 44% at 20% prevalence |
+| 13 | Checking a new patient | the notebook call and its output; a rejected reading |
+| 14 | Conclusions | the three answers; the limitations |
+| 15 | Thank you | questions |
+| 16–18 | Backup | the full test table; cleaning strategies; subgroups |
+
+---
+
+## Part 7 — Concepts you need to explain
+
+- **ROC AUC.** The chance that the model gives a random sick patient a higher risk than a random
+  healthy one. 0.5 is a coin toss and 1.0 is perfect. It doesn't depend on a cut-off.
 - **Accuracy, sensitivity, specificity.**
   - Accuracy: the share classified correctly.
-  - Sensitivity: the share of sick patients detected.
-  - Specificity: the share of healthy patients correctly cleared.
-  - The last two depend on the cut-off.
-- **Train/test split, and stratified.** The model learns from 80% of patients and is judged on 20% it
-  has never seen. Stratified means both parts keep the 50/50 balance.
-- **5-fold cross-validation.** The training data is cut into 5 parts. Each model trains on 4 and is
-  scored on the 5th, five times over. It is used to choose models and settings without touching the
-  test set.
-- **Grid search.** Trying every combination of hyperparameter values and keeping the one with the
-  best cross-validated score.
-- **The one-standard-error rule.** Choose the simplest model whose score is within one standard error
-  of the best. Differences smaller than the noise should not buy complexity.
-- **Bootstrap confidence interval.** Resample the test patients with replacement 2,000 times and
-  recompute the metric each time; the middle 95% is the interval. Resampling the same patients for
-  every model also gives intervals for the *differences* between models.
-- **Calibration and the Brier score.**
-  - Calibrated means a predicted 70% comes true about 70% of the time.
-  - The Brier score is the mean squared error of the predicted risks: lower is better, and always
-    predicting 50% scores 0.25.
-- **Permutation importance, grouped.** Shuffle a feature across patients and measure how much the AUC
-  drops. Related features (the 5 blood-pressure ones) are shuffled together, so they cannot stand in
-  for each other.
-- **Partial dependence.** Set one factor to a value for everyone and average the predicted risk. It
-  shows the *shape* of an effect.
-- **Gradient boosting.** Many small decision trees, each correcting the errors of the previous ones.
-  Trees handle thresholds and interactions naturally, which is why it beats a straight-line model
-  here.
-- **Logistic regression.** A weighted sum of the features passed through an S-curve. It is simple
-  and interpretable, but each feature can only push the log-odds in a straight line.
-- **SMOTE.** Creates synthetic patients by interpolating between a patient and a similar one.
-  - **Done after the split** (training data only), it can help imbalanced data. Here the data is
-    balanced, so it only hurt.
-  - **Done before the split**, synthetic near-copies of training patients end up in the test set.
-    That is leakage.
-- **Leakage.** Any way information from the test patients reaches training or model choice. It
-  inflates reported accuracy without making the model better.
-- **Positive predictive value (PPV).** The share of flagged patients who are really sick. Unlike
-  sensitivity and specificity, it depends on how common the disease is.
-- **The sick-quitter effect.** People who are diagnosed change their habits, so in data collected
-  after diagnosis, the habits look protective.
-- **Framingham risk score.** A standard clinical equation (2008) estimating 10-year risk of a first
-  CVD event from age, sex, BMI, systolic pressure, smoking and diabetes.
+  - Sensitivity: the share of sick patients caught.
+  - Specificity: the share of healthy patients cleared.
+- **Cut-off (threshold).** The risk above which a patient is called sick. Lowering it catches more sick
+  patients but flags more healthy ones.
+- **Train/test split, stratified.** Learn on 80%, judge on 20% never seen; stratified keeps the 50/50
+  balance in both parts.
+- **5-fold cross-validation.** Split the training data into 5 parts and train on 4 / test on 1, five
+  times. It is used for choosing without touching the test set.
+- **Grid search.** Try every combination of settings and keep the best cross-validated one.
+- **One-standard-error rule.** Prefer the simplest model whose score is within the noise of the best.
+- **Bootstrap confidence interval.** Recompute the metric on 2,000 resamples of the test patients and
+  keep the middle 95%. Paired: every model on the same resamples, so differences get intervals too.
+- **Calibration and the Brier score.** Calibrated means predicted 70% comes true about 70% of the time.
+  The Brier score is the mean squared error of the risks (lower is better; always 50% gives 0.25).
+- **Grouped permutation importance.** Scramble a group of features and measure the AUC lost; related
+  features are scrambled together.
+- **Partial dependence.** Set one factor to a value for everyone and average the predictions; it shows
+  the shape of an effect.
+- **Logistic regression.** A weighted sum of features turned into a probability. Simple and readable,
+  but each feature can only push in a straight line.
+- **Random forest.** Many decision trees on random subsets of patients and features, averaged.
+- **Gradient boosting.** Small trees added one at a time, each correcting the previous errors.
+- **MLP (neural network).** Layers of weighted sums with non-linear activations.
+- **Early stopping.** Boosting stops adding trees when a held-out 10% stops improving.
+- **SMOTE.** Synthetic patients interpolated between similar ones, used for imbalanced classes. Done
+  before the split, it plants near-copies of training patients in the test set: leakage.
+- **Leakage.** Any route by which test information reaches training or model choice. It inflates
+  reported results without improving the model.
+- **Positive predictive value.** The share of flagged patients who are really sick; it depends on how
+  common the disease is.
+- **Sick-quitter effect.** People change habits after diagnosis, so habits look protective in data
+  collected afterwards.
+- **Framingham risk score.** A standard 2008 equation for the 10-year risk of a first CVD event, from
+  age, sex, BMI, systolic pressure, smoking and diabetes.
+- **ACC/AHA 2017 stages.** The US guideline's blood-pressure categories: normal, elevated, stage 1
+  (130/80+), stage 2 (140/90+).
 
 ---
 
-## 5. Questions you may be asked
+## Part 8 — Questions you may be asked
 
-**Why only 73.6%? Isn't that low?** It is the ceiling for these 11 values. Careful studies get the
-same (~73%), the learning curve is flat, and five different algorithms all land within 0.01 AUC.
-Higher published figures are reproducible only with leaky evaluation (§9.2).
+**Why only 73.6%?** That is the ceiling for these 11 values. Careful studies get the same, five
+different algorithms land within 0.01 AUC, and the learning curve is flat.
 
-**Then why use ML at all?** The gain over the rule is real: +301 sick patients found at the same
-false-alarm rate. The model also gives a calibrated risk rather than a yes/no answer. And the work
-produced a 4-factor scorecard nearly as good as the best model.
+**Then why use ML?** It finds 301 more sick patients at the rule's false-alarm rate, and gives a
+calibrated risk instead of a yes/no. The project also produced a 4-factor scorecard nearly as good.
 
-**Why gradient boosting and not random forest?** The rule fixed in advance chose it. Random forest was
-0.0013 behind against a margin of 0.0012, a near tie, and gradient boosting is also faster. On the
-test set they differ by under 0.002, so in practice either is fine.
+**Why gradient boosting?** The rule fixed in advance chose it. Random forest and the MLP are
+practically tied, so either would do.
 
-**Did you clean the test set?** Cleaning rules are fixed per record and learn nothing, so applying
-them to test records leaks nothing. Strategies are compared on the same test patients (those valid
-under every strategy). A real system would reject impossible inputs at entry, which is what the tool
-does.
+**Why not SMOTE?** The classes are already balanced. Done correctly it made the models worse (64–71%);
+done before the split it inflated accuracy to 85–87%.
 
-**Why not SMOTE?** The classes are already 50/50, so there is nothing to balance. Applied correctly,
-SMOTE made the models worse (64–71%). Applied before the split, it inflated accuracy to 85–87%.
+**Did cleaning the test set leak anything?** No. The rules are fixed per record and learn nothing, and
+all strategies are scored on the same test patients. A real system would reject impossible inputs,
+which is what `patient()` does.
 
-**Why does smoking lower the risk?** It doesn't, biologically. In this data, diagnosed patients have
-usually quit, so smokers look healthier (the sick-quitter effect). The model is told to describe
-associations, and the clinical scorecard leaves smoking out.
+**Why does smoking lower the risk?** It doesn't, biologically. Diagnosed patients usually quit (the
+sick quitter). The model describes associations, and the clinical scorecard leaves smoking out.
 
-**Is the model fair?** Women and men get the same AUC and calibration. It is weaker for patients
-over 60, and a single cut-off doesn't suit every age: that is reported as a limitation.
+**Is the model fair?** Women and men get the same AUC and calibration. It is weaker over 60; that is
+reported as a limitation.
 
-**Can it predict who will get heart disease?** No. Diagnosis and features come from the same visit,
-so it detects existing disease. Prediction would need patients followed over time.
+**Can it predict future heart disease?** No. Features and diagnosis come from the same visit, so it
+detects existing disease. Prediction needs patients followed over time.
 
-**Why is there no .py file?** The brief accepts the work as a notebook or as a Python file; we chose
-the notebook. It contains all the code (52 code cells), so it runs on its own with just the data
-file.
+**Why is there no .py file?** The brief accepts either a notebook or a Python file. The notebook
+contains all the code, so it runs alone with just the data file.
 
-**Why run it on a VM?** To keep the computation reproducible and off the laptop. Every result in the
-notebook comes from a Docker container on dblp-vm, built from a specific commit. CI runs the tests on
-every push and the full report on pushes to main.
+**Where did it run?** On dblp-vm, in a Docker container with pinned library versions, started through
+GitHub Actions. The notebook in the zip is the output of that run.
 
 ---
 
-## 6. What is in the repository but not in the zip
+## Part 9 — The repository beyond the zip
 
 | Path | Purpose |
 |---|---|
-| `cardio.py` | the single source of all the code; the notebook build copies it in section by section; also a command line |
-| `report.md` | the source of the report; `build_report.py` turns it into the notebook and executes it |
-| `build_report.py` | Markdown → notebook converter: copies in the code sections, executes without `cardio.py`, fails if figures are missing |
-| `tests/` | 46 unit tests (cleaning rules, features, Framingham, metrics, scorecard, patient check, notebook build) |
-| `Dockerfile`, `.dockerignore` | the reproducible environment |
-| `.github/workflows/ci.yml` | tests on every push (about a minute) |
-| `.github/workflows/vm.yml` | run the report on dblp-vm on demand; also collect, log, stop, status |
-| `presentation/` | `build.py`, the template, icons, figures, `script.md`, the deck |
+| `cardio.py` | the single source of all code (copied into the notebook by the build); also a command line: `python cardio.py clean / compare / train / predict` |
+| `report.md` | the report's source |
+| `build_report.py` | builds and executes the notebook without `cardio.py`; checks the figures |
+| `tests/` | 46 unit tests: cleaning rules, features, Framingham, metrics, scorecard, patient check, notebook build |
+| `Dockerfile`, `requirements.txt` | the reproducible environment |
+| `.github/workflows/ci.yml` | tests on every push |
+| `.github/workflows/vm.yml` | runs the report on dblp-vm on demand (Actions → VM → Run workflow → `run`, `report`) |
+| `presentation/` | `build.py` (rebuilds the deck from the saved model), the template, figures, `script.md`, the deck |
 | `brief/` | the two course documents |
-| `outputs/` (not committed) | local copies of VM outputs, including `model.joblib` |
-| `submission/` (not committed) | the zip |
-
-Repository: https://github.com/hadigghazi/cardio-risk (private).
+| `outputs/`, `submission/` | local VM outputs and the zip (not committed) |
