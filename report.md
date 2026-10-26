@@ -1185,14 +1185,37 @@ The answer depends on the model, as Section 4.3 predicted:
   0.0014): detectable with 13,722 patients, but negligible. Trees split on the order of values, so a
   pressure of 16,020 mmHg simply lands in the top branch with every other high reading.
 - **Logistic regression is hurt by the raw data.** Its AUC falls by 0.017 (95% CI 0.014 to 0.019),
-  from 0.793 to 0.776. A handful of absurd values pull its straight-line coefficient for blood
-  pressure towards zero.
+  from 0.793 to 0.776. Its weights, below, show how.
 - **Repairing and dropping give the same result** for both models (differences under 0.001). Once
   repaired, these records look like ordinary ones, so adding them back changes little. Repair keeps
   more patients, but its value lies in not discarding real people rather than in accuracy.
 
-The practical lesson: cleaning is essential for linear models and for any analysis that reads
-coefficients or correlations (Section 4.3), even when a tree model would have survived without it.
+The logistic regression's blood-pressure weights, trained on the raw and on the clean data,
+converted back to the original units (change in log-odds):
+
+```python
+from sklearn.base import clone
+
+weights = {}
+for strategy in ["raw", "drop"]:
+    d, _ = train_test(strategy)
+    m = clone(searches["Logistic regression"].best_estimator_).fit(d[FEATURES], d["cardio"])
+    w = pd.Series(m.named_steps["lr"].coef_[0] / m.named_steps["scale"].scale_, index=FEATURES)
+    weights[f"trained on {strategy}"] = {
+        "systolic, per 10 mmHg": 10 * w["ap_hi"], "diastolic, per 10 mmHg": 10 * w["ap_lo"],
+        "pulse pressure, per 10 mmHg": 10 * w["pulse_pressure"],
+        "mean arterial pressure, per 10 mmHg": 10 * w["mean_arterial_pressure"],
+        "blood-pressure stage, per stage": w["bp_stage"]}
+pd.DataFrame(weights).style.format("{:+.3f}")
+```
+
+On the raw data, the weights of the four pressure readings shrink to between 3% and 35% of their
+size on clean data, and the diastolic weight almost vanishes. The weight of the blood-pressure stage
+grows more than fivefold. A reading of 16,020 mmHg is simply stage 3, so the stage carries much of
+the signal past the absurd values, which is why the model still reaches 0.776.
+
+The practical lesson: cleaning matters most for anything that reads coefficients or correlations
+(Section 4.3), and it helps linear models, even when a tree model would have survived without it.
 
 The common test set leaves out the test patients whose records fail a check. The protocol promised
 to report how the final model does on them:
