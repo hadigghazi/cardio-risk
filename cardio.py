@@ -77,6 +77,18 @@ def deduplicate(df: pd.DataFrame) -> pd.DataFrame:
     return df[~df.drop(columns="id").duplicated()].reset_index(drop=True)
 
 
+def split_ids(df: pd.DataFrame, test_size: float = TEST_SIZE, seed: int = SEED) -> tuple[set, set]:
+    """Train and test patient ids, drawn once from the deduplicated raw data, stratified by diagnosis.
+
+    Every cleaning strategy is split by these same ids, so all of them are scored on the same patients.
+    """
+    from sklearn.model_selection import train_test_split
+
+    d = deduplicate(df)
+    train, test = train_test_split(d["id"], test_size=test_size, stratify=d[TARGET], random_state=seed)
+    return set(train), set(test)
+
+
 # ----------------------------------------------------------------------------------- data quality
 
 def bmi(df: pd.DataFrame) -> pd.Series:
@@ -94,30 +106,35 @@ def audit(df: pd.DataFrame) -> pd.DataFrame:
 def repair_pressure(value: float, lo: float, hi: float) -> tuple[float, str | None]:
     """The reading a recorded blood pressure most plausibly was, and the rule that recovered it.
 
-    Returns (nan, None) when no rule gives a plausible value. Rules, in order:
+    Exactly one rule may explain a reading; a value that would need two guesses (a sign flip and then
+    a unit fix, say) is not a recognisable error, and (nan, None) is returned. The rules:
       sign          a negative reading is the same reading with a stray minus (-120 -> 120)
       cmHg          recorded in cmHg instead of mmHg (12 -> 120), only if that lands in range
       extra digits  trailing digits typed by mistake (1000 -> 100, 14020 -> 140, 906 -> 90)
     """
-    if pd.isna(value):
+    if pd.isna(value) or not math.isfinite(value):
         return math.nan, None
-    rule = None
-    if value < 0:
-        value, rule = -value, "sign"
     if lo <= value <= hi:
-        return value, rule
+        return value, None
+    if value < 0:
+        return (-value, "sign") if lo <= -value <= hi else (math.nan, None)
     if 0 < value < lo:
         return (value * 10, "cmHg") if lo <= value * 10 <= hi else (math.nan, None)
-    if value > hi:
-        value = int(value)
-        while value > hi:
-            value //= 10
-        return (value, "extra digits") if value >= lo else (math.nan, None)
-    return math.nan, None  # zero
+    if value > hi and float(value).is_integer():
+        digits = int(value)
+        while digits > hi:
+            digits //= 10
+        return (digits, "extra digits") if digits >= lo else (math.nan, None)
+    return math.nan, None  # zero, or a fractional reading above range
 
 
 def repair(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Blood pressures with a recognisable entry error, corrected; plus a log of every change.
+
+    One error per record pair: readings typed into each other's fields are swapped first, on the
+    values as recorded, and only when the swapped pair is plausible; a record that is swapped gets no
+    other rule. Each remaining reading may then be fixed by one rule of repair_pressure(). Nothing is
+    swapped after another rule has fired, so no record carries two stacked guesses.
 
     Height and weight are not repaired: their errors show no pattern that identifies the true value.
     A value no rule can recover becomes NaN, so the record fails audit() and is dropped afterwards.
@@ -125,6 +142,15 @@ def repair(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     out = df.copy()
     out[["ap_hi", "ap_lo"]] = out[["ap_hi", "ap_lo"]].astype(float)  # room for NaN
     log = []
+    # 1. systolic and diastolic typed into each other's field
+    swapped = (out["ap_lo"] > out["ap_hi"]) & out["ap_hi"].between(*BOUNDS["ap_lo"]) \
+        & out["ap_lo"].between(*BOUNDS["ap_hi"])
+    for idx in out.index[swapped]:
+        hi_, lo_ = out.at[idx, "ap_hi"], out.at[idx, "ap_lo"]
+        log.append({"id": out.at[idx, "id"], "field": "ap_hi/ap_lo", "before": f"{hi_:g}/{lo_:g}",
+                    "after": f"{lo_:g}/{hi_:g}", "rule": "swapped"})
+    out.loc[swapped, ["ap_hi", "ap_lo"]] = out.loc[swapped, ["ap_lo", "ap_hi"]].to_numpy()
+    # 2. one rule per remaining implausible reading (a swapped pair is already in range)
     for col in ("ap_hi", "ap_lo"):
         lo, hi = BOUNDS[col]
         bad = ~out[col].between(lo, hi)
@@ -135,14 +161,6 @@ def repair(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
             log.append({"id": out.at[idx, "id"], "field": col, "before": f"{before:g}",
                         "after": "" if math.isnan(after) else f"{after:g}",
                         "rule": rule or "unrecoverable"})
-    # systolic and diastolic typed into each other's field
-    swapped = (out["ap_lo"] > out["ap_hi"]) & out["ap_hi"].between(*BOUNDS["ap_lo"]) \
-        & out["ap_lo"].between(*BOUNDS["ap_hi"])
-    for idx in out.index[swapped]:
-        hi_, lo_ = out.at[idx, "ap_hi"], out.at[idx, "ap_lo"]
-        log.append({"id": out.at[idx, "id"], "field": "ap_hi/ap_lo", "before": f"{hi_:g}/{lo_:g}",
-                    "after": f"{lo_:g}/{hi_:g}", "rule": "swapped"})
-    out.loc[swapped, ["ap_hi", "ap_lo"]] = out.loc[swapped, ["ap_lo", "ap_hi"]].to_numpy()
     return out, pd.DataFrame(log, columns=["id", "field", "before", "after", "rule"])
 
 
@@ -222,18 +240,6 @@ def dataset(strategy: str = "drop", path: Path | str = DATA) -> pd.DataFrame:
     return add_features(prepare(cleaned))
 
 
-def split_ids(df: pd.DataFrame, test_size: float = TEST_SIZE, seed: int = SEED) -> tuple[set, set]:
-    """Train and test patient ids, drawn once from the deduplicated raw data, stratified by diagnosis.
-
-    Every cleaning strategy is split by these same ids, so all of them are scored on the same patients.
-    """
-    from sklearn.model_selection import train_test_split
-
-    d = deduplicate(df)
-    train, test = train_test_split(d["id"], test_size=test_size, stratify=d[TARGET], random_state=seed)
-    return set(train), set(test)
-
-
 def train_test(strategy: str = "drop", path: Path | str = DATA) -> tuple[pd.DataFrame, pd.DataFrame]:
     """The modelling table for one cleaning strategy, divided by the fixed train/test patient ids."""
     train_ids, test_ids = split_ids(load(path))
@@ -270,7 +276,7 @@ def framingham_terms(df: pd.DataFrame) -> np.ndarray:
 def framingham_risk(df: pd.DataFrame) -> pd.Series:
     """Published Framingham 10-year CVD risk, as a clinician would compute it, with nothing refitted."""
     terms = framingham_terms(df)
-    risk = np.empty(len(df))
+    risk = np.full(len(df), np.nan)
     for male, c in FRAMINGHAM.items():
         rows = df["male"].to_numpy() == male
         beta = np.array([c["ln_age"], c["ln_bmi"], c["ln_sbp"], c["smoke"], c["diabetes"]])
@@ -290,7 +296,10 @@ def framingham_design(df: pd.DataFrame) -> np.ndarray:
 
 N_JOBS = int(os.environ.get("CARDIO_JOBS", "4"))
 CV_FOLDS = 5
-# Simplest first: when several models are statistically tied, the earliest in this order is chosen
+# Simplest first: when several models are statistically tied, the earliest in this order is chosen.
+# Fixed before any result, by model size: a few coefficients (the two linear models), then an ensemble of
+# small trees (gradient boosting: at most 15 leaves each), then a forest of 200 deep trees (thousands of
+# leaves each), then a neural network.
 SIMPLICITY = ["Framingham form (refit)", "Logistic regression", "Gradient boosting", "Random forest",
               "Neural network (MLP)"]
 
@@ -321,7 +330,7 @@ def model_specs() -> dict[str, tuple]:
             {"lr__C": [0.01, 0.1, 1.0, 10.0]}),
         "Random forest": (
             RandomForestClassifier(n_estimators=200, random_state=SEED, n_jobs=1),
-            {"min_samples_leaf": [10, 30, 100], "max_features": ["sqrt", 0.5]}),
+            {"min_samples_leaf": [10, 30, 100], "max_features": [2, "sqrt", 0.5]}),
         "Gradient boosting": (
             # early stopping on 10% of the training data (sklearn's default above 10,000 rows) ends
             # the boosting long before max_iter at the larger learning rates
@@ -330,7 +339,8 @@ def model_specs() -> dict[str, tuple]:
              "min_samples_leaf": [20, 50, 200]}),
         "Neural network (MLP)": (
             scaled("mlp", MLPClassifier(early_stopping=True, max_iter=300, random_state=SEED)),
-            {"mlp__hidden_layer_sizes": [(32,), (64, 32), (128, 64)], "mlp__alpha": [1e-5, 1e-4, 1e-2]}),
+            {"mlp__hidden_layer_sizes": [(32,), (64, 32), (128, 64), (256, 128)],
+             "mlp__alpha": [1e-4, 1e-2, 1e-1, 1.0]}),
     }
 
 
@@ -358,7 +368,8 @@ def compare_models(train: pd.DataFrame, features: list[str] = FEATURES, specs: d
     Everything is scored on the same five validation folds of the training patients. The baselines
     fit nothing; where a baseline needs a cut-off (systolic pressure alone, published Framingham risk),
     it is chosen on the other four folds. Each model's grid is searched by AUC, and its row reports
-    the best setting. Returns the table and the fitted searches (refitted on all training patients).
+    the best setting. `auc_sd` is the sample standard deviation over the five folds for every row.
+    Returns the table and the fitted searches (refitted on all training patients).
     """
     from sklearn.metrics import make_scorer, recall_score
     from sklearn.model_selection import GridSearchCV
@@ -385,12 +396,13 @@ def compare_models(train: pd.DataFrame, features: list[str] = FEATURES, specs: d
     scoring = {"auc": "roc_auc", "accuracy": "accuracy", "sensitivity": make_scorer(recall_score),
                "specificity": make_scorer(recall_score, pos_label=0)}
     searches = {}
-    for name, (estimator, grid) in (specs or model_specs()).items():
+    for name, (estimator, grid) in (specs if specs is not None else model_specs()).items():
         search = GridSearchCV(estimator, grid, scoring=scoring, refit="auc", cv=cv, n_jobs=n_jobs)
         search.fit(X, y)
         r, i = search.cv_results_, search.best_index_
+        fold_aucs = [r[f"split{k}_test_auc"][i] for k in range(CV_FOLDS)]
         rows.append({"model": name, "kind": "machine learning", "auc": r["mean_test_auc"][i],
-                     "auc_sd": r["std_test_auc"][i],
+                     "auc_sd": float(np.std(fold_aucs, ddof=1)),
                      **{m: r[f"mean_test_{m}"][i] for m in ("accuracy", "sensitivity", "specificity")},
                      "best setting": ", ".join(f"{k.split('__')[-1]}={v}" for k, v in search.best_params_.items()),
                      "fit seconds": r["mean_fit_time"][i]})
@@ -477,7 +489,19 @@ def screening_threshold(y, risk, sensitivity: float = 0.80) -> float:
     """The highest cut-off that still detects at least `sensitivity` of the diseased patients."""
     y, risk = np.asarray(y), np.asarray(risk)
     sick = np.sort(risk[y == 1])
-    return float(sick[int(math.floor((1 - sensitivity) * len(sick)))])
+    caught = math.ceil(sensitivity * len(sick) - 1e-9)   # patients the cut-off must catch
+    return float(sick[len(sick) - caught])
+
+
+def threshold_at_specificity(y, risk, specificity: float) -> float:
+    """The lowest cut-off that still clears at least `specificity` of the healthy patients, i.e. the
+    most sensitive operating point at that specificity. Patients at or above the cut-off are flagged."""
+    y, risk = np.asarray(y), np.asarray(risk)
+    healthy = np.sort(risk[y == 0])
+    cleared = math.ceil(specificity * len(healthy) - 1e-9)  # healthy patients that must fall below it
+    if cleared == 0:
+        return -math.inf
+    return float(np.nextafter(healthy[cleared - 1], math.inf))
 
 
 # ---------------------------------------------------------------------------------- points score
@@ -490,7 +514,9 @@ POINTS_BANDS = {
 POINTS_LEVELS = {"cholesterol": {1: "normal", 2: "above normal", 3: "well above normal"},
                  "gluc": {1: "normal", 2: "above normal", 3: "well above normal"},
                  "smoke": {0: "no", 1: "yes"}, "alco": {0: "no", 1: "yes"}, "active": {0: "no", 1: "yes"}}
-# The clinical scorecard: the four factors whose direction is medically sound (Section 8.5)
+# The clinical scorecard (Section 8.5): measured values only, and only those whose training-set points
+# go the way medicine expects. The self-reported answers are left out whatever their sign (reverse
+# causation makes them unreliable here), and glucose because its training-set points are negative.
 CLINICAL_FACTORS = ["age_years", "ap_hi", "bmi", "cholesterol"]
 POINTS_LABELS = {"age_years": "Age (years)", "ap_hi": "Systolic pressure (mmHg)", "bmi": "BMI (kg/m²)",
                  "cholesterol": "Cholesterol", "gluc": "Glucose", "smoke": "Smokes", "alco": "Drinks alcohol",
@@ -502,7 +528,9 @@ class PointsScore:
 
     Fitted as a logistic regression on banded factors (lowest band as reference). One point is worth
     `unit` in log-odds, so every coefficient is rounded to whole points. The total is then mapped back
-    to a risk with a one-variable logistic regression on the training patients.
+    to a risk by isotonic regression on the training patients: the share with CVD at each total,
+    forced to rise with the total. (A logistic curve in the total is too rigid here: the large step in
+    points between systolic bands makes the totals cluster, and the curve misstates both ends.)
     """
 
     def __init__(self, unit: float = 0.1, factors: list[str] | None = None):
@@ -518,25 +546,54 @@ class PointsScore:
             else:
                 levels = POINTS_LEVELS[col]
                 cols[col] = pd.Categorical(df[col].map(levels), list(levels.values()))
-        return pd.DataFrame(cols, index=df.index)
+        bands = pd.DataFrame(cols, index=df.index)
+        outside = [c for c in bands if bands[c].isna().any()]
+        if outside:  # never score a value the card has no band for as if it were the reference band
+            raise ValueError("values outside the scorecard's bands: " + ", ".join(outside))
+        return bands
 
     def _design(self, df: pd.DataFrame) -> pd.DataFrame:
         return pd.get_dummies(self._bands(df), drop_first=True, dtype=float)
 
     def fit(self, df: pd.DataFrame, y):
+        from sklearn.isotonic import IsotonicRegression
         from sklearn.linear_model import LogisticRegression
 
         X = self._design(df)
         lr = LogisticRegression(C=1.0, max_iter=5000).fit(X, y)
         self.points_ = pd.Series(np.round(lr.coef_[0] / self.unit).astype(int), index=X.columns)
-        self.calibration_ = LogisticRegression(C=1e6, max_iter=5000).fit(self.total(df).to_frame(), y)
+        iso = IsotonicRegression(y_min=0, y_max=1, out_of_bounds="clip").fit(self.total(df), np.asarray(y))
+        self.risk_points_ = np.asarray(iso.X_thresholds_, dtype=float)
+        self.risk_values_ = np.asarray(iso.y_thresholds_, dtype=float)
         return self
 
     def total(self, df: pd.DataFrame) -> pd.Series:
         return (self._design(df)[self.points_.index] @ self.points_).rename("points")
 
+    def _risk(self, totals) -> np.ndarray:
+        totals = np.asarray(totals, dtype=float)
+        risk = np.interp(totals, self.risk_points_, self.risk_values_)
+        # isotonic regression can give neighbouring totals the same risk; a millionth-sized nudge keeps
+        # more points always meaning more risk, so ranking by risk is ranking by points
+        span = max(self.risk_points_[-1] - self.risk_points_[0], 1.0)
+        return risk * (1 - 1e-6) + 1e-6 * np.clip((totals - self.risk_points_[0]) / span, 0, 1)
+
     def predict_proba(self, df: pd.DataFrame) -> np.ndarray:
-        return self.calibration_.predict_proba(self.total(df).to_frame())[:, 1]
+        return self._risk(self.total(df))
+
+    def to_dict(self) -> dict:
+        """Plain numbers only, so a saved scorecard loads in any program, with no pickled class."""
+        return {"unit": self.unit, "factors": list(self.factors),
+                "points": {k: int(v) for k, v in self.points_.items()},
+                "risk_points": self.risk_points_.tolist(), "risk_values": self.risk_values_.tolist()}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PointsScore":
+        card = cls(d["unit"], d["factors"])
+        card.points_ = pd.Series(d["points"], dtype=int)
+        card.risk_points_ = np.asarray(d["risk_points"], dtype=float)
+        card.risk_values_ = np.asarray(d["risk_values"], dtype=float)
+        return card
 
     def table(self) -> pd.DataFrame:
         """The scorecard: every band of every factor with its points (reference bands score 0)."""
@@ -550,7 +607,7 @@ class PointsScore:
 
     def risk_by_total(self, totals) -> pd.Series:
         totals = np.asarray(list(totals))
-        return pd.Series(self.calibration_.predict_proba(pd.DataFrame({"points": totals}))[:, 1], index=totals)
+        return pd.Series(self._risk(totals), index=totals)
 
 
 # ---------------------------------------------------------------------------------- explanation
@@ -593,7 +650,11 @@ def grouped_permutation_importance(model, df: pd.DataFrame, groups: dict = FEATU
 
 def partial_dependence_curve(model, df: pd.DataFrame, feature: str, values) -> pd.Series:
     """Average predicted risk when every patient's `feature` is set to each value in turn, with the
-    features derived from it recomputed, so the model never sees an impossible combination."""
+    features derived from it recomputed, so the model never sees an impossible combination.
+
+    For systolic pressure, a diastolic reading that would reach the new systolic value is capped 10 mmHg
+    below it; at the low end of the curve this also lowers some diastolic readings (about 7% of patients
+    at 100 mmHg, under 1% from 120 mmHg up), so that end is not a pure systolic effect."""
     out = {}
     for v in values:
         d = df.copy()
@@ -605,26 +666,87 @@ def partial_dependence_curve(model, df: pd.DataFrame, feature: str, values) -> p
     return pd.Series(out, name=feature)
 
 
+def drop_group_importance(estimator, train: pd.DataFrame, groups: dict = FEATURE_GROUPS,
+                          n_jobs: int = N_JOBS) -> pd.DataFrame:
+    """Cross-validated AUC (training patients) of the same model retrained without each group of
+    features. Unlike permutation importance, this asks what the data can do without a group, not how
+    much one fitted model leans on it."""
+    from sklearn.base import clone
+    from sklearn.model_selection import cross_val_score
+
+    def cv_auc(cols):
+        return cross_val_score(clone(estimator), train[cols], train[TARGET], cv=cv_splitter(),
+                               scoring="roc_auc", n_jobs=n_jobs).mean()
+
+    full = cv_auc(FEATURES)
+    rows = [{"features left out": "none (all 15)", "CV AUC": full, "AUC lost": 0.0}]
+    for name, cols in groups.items():
+        auc = cv_auc([f for f in FEATURES if f not in cols])
+        rows.append({"features left out": name, "CV AUC": auc, "AUC lost": full - auc})
+    return pd.DataFrame(rows).set_index("features left out")
+
+
 # ------------------------------------------------------------------------------------ reliability
 
-def strategy_comparison(estimators: dict, path: Path | str = DATA) -> pd.DataFrame:
+def strategy_comparison(estimators: dict, path: Path | str = DATA, n_boot: int = 2000) -> pd.DataFrame:
     """Each estimator trained on each cleaning strategy's training patients and scored on the common
-    test patients (those whose records pass every check), so only the training data differs."""
+    test patients (those whose records pass every check), so only the training data differs. The AUC
+    change against 'drop' gets a 95% paired bootstrap interval over the test patients."""
     from sklearn.base import clone
     from sklearn.metrics import roc_auc_score
 
-    common = set(train_test("drop", path)[1]["id"])
-    rows = []
+    common = train_test("drop", path)[1].set_index("id")
+    y = common[TARGET]
+    rows, risks = [], {}
     for strategy in STRATEGIES:
         tr, te = train_test(strategy, path)
-        te = te[te["id"].isin(common)]
+        te = te.set_index("id").loc[common.index]          # the same patients, in the same order
         for name, est in estimators.items():
             model = clone(est).fit(tr[FEATURES], tr[TARGET])
             risk = model.predict_proba(te[FEATURES])[:, 1]
+            risks[(name, strategy)] = risk
             rows.append({"model": name, "strategy": strategy, "training patients": len(tr),
-                         "test AUC": roc_auc_score(te[TARGET], risk),
-                         "test accuracy": ((risk >= 0.5) == te[TARGET]).mean()})
-    return pd.DataFrame(rows)
+                         "test AUC": roc_auc_score(y, risk), "test accuracy": float(((risk >= 0.5) == y).mean())})
+    table = pd.DataFrame(rows)
+    table["AUC change vs drop"] = 0.0
+    table["95% CI"] = "-"
+    for name in estimators:
+        boot = bootstrap(y, {s: risks[(name, s)] for s in STRATEGIES}, roc_auc_score, n=n_boot)
+        base = table.loc[(table["model"] == name) & (table["strategy"] == "drop"), "test AUC"].iloc[0]
+        for s in STRATEGIES:
+            row = (table["model"] == name) & (table["strategy"] == s)
+            table.loc[row, "AUC change vs drop"] = table.loc[row, "test AUC"].iloc[0] - base
+            if s != "drop":
+                lo, hi = interval(boot[s] - boot["drop"])
+                table.loc[row, "95% CI"] = f"{lo:+.4f} to {hi:+.4f}"
+    return table
+
+
+def excluded_test_patients(model, path: Path | str = DATA) -> pd.DataFrame:
+    """The test patients that 'drop' removes as implausible: how many, how often they have CVD, how many
+    'repair' recovers, and how the final model (trained on 'drop') scores the recovered ones."""
+    from sklearn.metrics import roc_auc_score
+
+    raw = load(path)
+    _, test_ids = split_ids(raw)
+    raw_test = deduplicate(raw)
+    raw_test = raw_test[raw_test["id"].isin(test_ids)]
+    valid = train_test("drop", path)[1]
+    repaired = train_test("repair", path)[1]
+    removed = raw_test[~raw_test["id"].isin(valid["id"])]
+    recovered = repaired[repaired["id"].isin(removed["id"])]
+
+    def scored(label, d):
+        risk = model.predict_proba(d[FEATURES])[:, 1]
+        return {"test patients": label, "patients": len(d), "share with CVD": d[TARGET].mean(),
+                "AUC": roc_auc_score(d[TARGET], risk), "accuracy": float(((risk >= 0.5) == d[TARGET]).mean())}
+
+    rows = [scored("valid records (the test set of Section 8)", valid),
+            {"test patients": "removed as implausible by 'drop'", "patients": len(removed),
+             "share with CVD": removed[TARGET].mean(), "AUC": np.nan, "accuracy": np.nan},
+            scored("  of which recovered by 'repair', scored after repair", recovered),
+            scored("valid + recovered", pd.concat([valid, recovered]))]
+    return pd.DataFrame(rows).set_index("test patients")
 
 
 def smote(X: np.ndarray, y: np.ndarray, n_new: int, k: int = 5, seed: int = SEED):
@@ -669,24 +791,28 @@ def leakage_experiments(train: pd.DataFrame, test: pd.DataFrame, correct_accurac
     rows.append({"pipeline": "  (the same forest on unseen patients)", "model": "random forest (fully grown trees)",
                  "reported accuracy": forest.score(test[FEATURES], test[TARGET])})
 
-    # 2. oversampling (SMOTE) the whole dataset, then splitting it
+    # 2. oversampling (SMOTE) the whole dataset, then splitting it. Each model is shown three ways: with
+    #    no oversampling and with SMOTE done correctly (training patients only), both scored on unseen
+    #    patients, and with SMOTE done before the split
     everything = pd.concat([train, test])
     X, y = everything[FEATURES].to_numpy(float), everything[TARGET].to_numpy()
     sx, sy = smote(X, y, n_new=len(everything), seed=seed)      # triples the data, as some papers do
     Xa, ya = np.vstack([X, sx]), np.concatenate([y, sy])
     Xtr, Xte, ytr, yte = train_test_split(Xa, ya, test_size=TEST_SIZE, stratify=ya, random_state=seed)
+    tx, ty = train[FEATURES].to_numpy(float), train[TARGET].to_numpy()
+    vx, vy = test[FEATURES].to_numpy(float), test[TARGET].to_numpy()
+    tsx, tsy = smote(tx, ty, n_new=len(train), seed=seed)
     knn = make_pipeline(StandardScaler(), KNeighborsClassifier(n_neighbors=1))
     for label, model in [("k-nearest neighbours (k = 1)", knn), ("random forest (fully grown trees)", forest)]:
+        model.fit(tx, ty)
+        rows.append({"pipeline": "  (no oversampling, scored on unseen patients)", "model": label,
+                     "reported accuracy": model.score(vx, vy)})
+        model.fit(np.vstack([tx, tsx]), np.concatenate([ty, tsy]))
+        rows.append({"pipeline": "  (SMOTE on the training patients only, scored on unseen patients)",
+                     "model": label, "reported accuracy": model.score(vx, vy)})
         model.fit(Xtr, ytr)
         rows.append({"pipeline": "Mistake 2: SMOTE oversampling before the train/test split", "model": label,
                      "reported accuracy": model.score(Xte, yte)})
-    # the same models with SMOTE applied correctly: on the training patients only
-    tx, ty = train[FEATURES].to_numpy(float), train[TARGET].to_numpy()
-    sx, sy = smote(tx, ty, n_new=len(train), seed=seed)
-    for label, model in [("k-nearest neighbours (k = 1)", knn), ("random forest (fully grown trees)", forest)]:
-        model.fit(np.vstack([tx, sx]), np.concatenate([ty, sy]))
-        rows.append({"pipeline": "  (SMOTE on the training patients only, scored on unseen patients)", "model": label,
-                     "reported accuracy": model.score(test[FEATURES].to_numpy(float), test[TARGET])})
 
     # 3. trying many random splits and reporting the luckiest
     lr = make_pipeline(StandardScaler(), LogisticRegression(C=0.1, max_iter=5000))
@@ -701,8 +827,12 @@ def leakage_experiments(train: pd.DataFrame, test: pd.DataFrame, correct_accurac
     return pd.DataFrame(rows)
 
 
-def subgroup_table(df: pd.DataFrame, risk, threshold: float = 0.5) -> pd.DataFrame:
-    """AUC, sensitivity, specificity and mean predicted vs observed risk, by sex and by age band."""
+def subgroup_table(df: pd.DataFrame, risk, threshold: float = 0.5, n_boot: int = 1000) -> pd.DataFrame:
+    """By sex and by age band: the model's AUC with a 95% bootstrap interval, the AUC of systolic
+    pressure alone in the same group (to separate the model from the group), sensitivity and
+    specificity at the cut-off, and the mean predicted risk against the observed share
+    (calibration-in-the-large). AUCs of groups that differ in spread or prevalence are not like for
+    like: within a narrow age band, for instance, age itself no longer separates anyone."""
     from sklearn.metrics import roc_auc_score
 
     d = df.assign(risk=np.asarray(risk))
@@ -715,8 +845,10 @@ def subgroup_table(df: pd.DataFrame, risk, threshold: float = 0.5) -> pd.DataFra
     for name, mask in groups.items():
         g = d[mask]
         m = classification_metrics(g[TARGET], g["risk"], threshold)
+        lo, hi = interval(bootstrap(g[TARGET], {"auc": g["risk"]}, roc_auc_score, n=n_boot)["auc"])
         rows.append({"group": name, "patients": len(g), "share with CVD": g[TARGET].mean(),
-                     "mean predicted risk": g["risk"].mean(), "AUC": m["auc"],
+                     "mean predicted risk": g["risk"].mean(), "AUC": m["auc"], "AUC 95% CI": f"{lo:.3f}-{hi:.3f}",
+                     "systolic alone AUC": roc_auc_score(g[TARGET], g["ap_hi"]),
                      "sensitivity": m["sensitivity"], "specificity": m["specificity"]})
     return pd.DataFrame(rows).set_index("group")
 
@@ -735,6 +867,7 @@ MODEL_FILE = OUTPUTS / "model.joblib"
 # its own search still agrees with this before saving the model)
 FINAL_PARAMS = {"learning_rate": 0.01, "max_leaf_nodes": 15, "min_samples_leaf": 50}
 SCREENING_SENSITIVITY = 0.80
+AGE_RANGE = (30, 65)   # years: the ages the model was trained on
 
 
 def final_estimator():
@@ -751,18 +884,22 @@ def build_final(train: pd.DataFrame, model=None) -> dict:
             "points": PointsScore(factors=CLINICAL_FACTORS).fit(train, train[TARGET]), "features": FEATURES}
 
 
-def save_final(bundle: dict, path: Path = MODEL_FILE) -> Path:
+def save_final(bundle: dict, path: Path | str = MODEL_FILE) -> Path:
+    """Save the bundle. The scorecard is stored as plain numbers (PointsScore.to_dict), so the file
+    loads in any program that has this code, not only in the one that created it."""
     import joblib
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(bundle, path)
+    joblib.dump({**bundle, "points": bundle["points"].to_dict()}, path)
     return path
 
 
-def load_final(path: Path = MODEL_FILE) -> dict:
+def load_final(path: Path | str = MODEL_FILE) -> dict:
     import joblib
     if not Path(path).exists():
         raise FileNotFoundError(f"{path} not found: fit and save the final model first (build_final, save_final)")
-    return joblib.load(path)
+    bundle = joblib.load(path)
+    return {**bundle, "points": PointsScore.from_dict(bundle["points"])}
 
 
 def patient(age: float, sex: str, height: float, weight: float, systolic: float, diastolic: float,
@@ -774,6 +911,12 @@ def patient(age: float, sex: str, height: float, weight: float, systolic: float,
     """
     if sex not in ("female", "male"):
         raise ValueError("sex must be 'female' or 'male'")
+    for name, value in [("age", age), ("height", height), ("weight", weight), ("systolic", systolic),
+                        ("diastolic", diastolic)]:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"{name} must be a number, not {value!r}")
+    if not AGE_RANGE[0] <= age <= AGE_RANGE[1]:
+        raise ValueError(f"age {age:g} is outside the {AGE_RANGE[0]}-{AGE_RANGE[1]} years the model was trained on")
     for name, value, allowed in [("cholesterol", cholesterol, (1, 2, 3)), ("glucose", glucose, (1, 2, 3)),
                                  ("smoke", smoke, (0, 1)), ("alcohol", alcohol, (0, 1)), ("active", active, (0, 1))]:
         if value not in allowed:
@@ -870,10 +1013,11 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("clean", help="data-quality audit and cleaning strategies").set_defaults(func=_cmd_clean)
     compare = sub.add_parser("compare", help="cross-validated comparison of baselines and models")
-    compare.add_argument("--strategy", default="drop", choices=STRATEGIES)
+    # 'raw' is not offered: its impossible pressures (negative, zero) break the Framingham logarithms
+    compare.add_argument("--strategy", default="drop", choices=["drop", "repair"])
     compare.set_defaults(func=_cmd_compare)
     train = sub.add_parser("train", help="fit the final model and save it")
-    train.add_argument("--strategy", default="drop", choices=STRATEGIES)
+    train.add_argument("--strategy", default="drop", choices=["drop", "repair"])
     train.set_defaults(func=_cmd_train)
     predict = sub.add_parser("predict", help="assess one patient with the saved model")
     predict.add_argument("--age", type=float, required=True, help="years")

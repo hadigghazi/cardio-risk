@@ -2,14 +2,14 @@
 
 **Hadi Ghazi**, Lebanese University
 
-*Project topic 2: Patient's Sickness Prediction, using the `cardio` dataset.*
+*Project topic: Patient's Sickness Prediction, using the `cardio` dataset.*
 
 ## 1. Introduction
 
-Cardiovascular diseases (CVDs) kill an estimated 17.9 million people every year, more than any other
-cause [1]. Many of these deaths could be delayed if patients at risk were identified early. Doctors find
-this hard to do reliably by hand: no single measurement settles the question, and the risk builds up
-from many small factors.
+Cardiovascular diseases (CVDs) are the leading cause of death worldwide: an estimated 19.8 million
+people died of them in 2022, about a third of all deaths [1]. Many of these deaths could be delayed if
+patients at risk were identified early. Doctors find this hard to do reliably by hand: no single
+measurement settles the question, and the risk builds up from many small factors.
 
 **Objective.** Build a model that uses the values collected at a routine medical examination (age,
 sex, height, weight, blood pressure, cholesterol, glucose, and three lifestyle questions) to tell
@@ -17,10 +17,11 @@ whether a patient has a cardiovascular disease. Then evaluate how well it does t
 is delivered with a function that gives a verdict and a risk for a new patient (Section 10).
 
 The dataset [2] has 70,000 patients, which is large for medical tabular data, but it is not clean. Some
-recorded blood pressures are impossible, such as −150 or 16,020 mmHg. The signal is also modest:
-careful studies of this dataset report about 73% accuracy [5]. Other published papers report 88% [6]
-and even 94.5% [7] on the same data, which is hard to reconcile with that. Three questions therefore guide the evaluation, so
-that the final model comes with an honest account of what it can do:
+recorded blood pressures are impossible, such as −150 or 16,020 mmHg. The signal is also modest: a
+comparative study of a cleaned version of this dataset reports 73.4% accuracy for its best model [5].
+Other papers report 88% [6] and 94.5% [7] on the same 70,000 records. A gap that large deserves an
+explanation. Three questions therefore guide the evaluation, so that the final model comes with an
+honest account of what it can do:
 
 - **Q1. How much does machine learning improve on what a doctor already has?** The models are
   compared with two clinical baselines. The first is a blood-pressure threshold from the ACC/AHA 2017
@@ -28,11 +29,11 @@ that the final model comes with an honest account of what it can do:
   Framingham office-based risk score [4], which uses age, sex, BMI, blood pressure, smoking and
   diabetes.
 - **Q2. How much do data-handling choices change the measured performance?** This covers the
-  cleaning strategy, and the common mistakes that let information from the test set leak into
-  training. Reproducing those mistakes shows how accuracies far above 73% can be produced.
+  cleaning strategy, and the common evaluation mistakes that let information from the test set leak
+  into training. Reproducing those mistakes shows how much they can inflate a reported accuracy.
 - **Q3. Can the final model's predictions be trusted and explained?** This covers which factors drive
   the predictions, whether a simple points score can match the best model, whether predicted risks
-  match observed frequencies, and whether errors are evenly spread across sexes and age groups.
+  match observed frequencies, and how the model performs for different sexes and age groups.
 
 **Structure.** Section 2 fixes the evaluation protocol before any model is trained. Section 3
 describes the data, Section 4 cleans it, Section 5 explores it, and Section 6 derives features.
@@ -42,7 +43,8 @@ use, and Section 11 concludes, with the study's limitations.
 
 All the project's code is in this notebook, each part placed where it is first needed. The first
 cell holds the libraries, the file locations and the constants used throughout. The notebook finds
-its folder by looking for `data/cardio.csv`.
+its folder by looking for `data/cardio.csv`. Running every cell takes about 15 minutes on four
+processor cores.
 
 <!-- code: setup -->
 
@@ -74,32 +76,36 @@ The protocol is fixed before modelling, so that no result can steer the choices 
    tested on a patient it had already seen.
 2. **One stratified train/test split.** 80% of patients go to training and 20% to test (seed 42).
    The split is drawn once, by patient id, from the deduplicated raw data. Every later comparison
-   uses the same ids. Exploratory analysis (Section 5) and every modelling decision use the training
-   patients only.
+   uses the same ids. From Section 4 on, every figure that involves the diagnosis is computed on the
+   training patients only, and so is every modelling decision.
 3. **Cleaning learns nothing from the data.** It applies fixed per-record rules, so it cannot leak
-   test information into training. Anything that *is* learned (scaling, model parameters, thresholds)
-   is fitted on training data only, inside cross-validation folds during model selection.
+   test information into training. (The rules were written after looking at the impossible values of
+   the whole file, but they never look at the diagnosis.) Anything that *is* learned (scaling, model
+   parameters, cut-offs) is fitted on training data only, inside cross-validation folds during model
+   selection.
 4. **Model selection.** Models are tuned and compared with 5-fold stratified cross-validation on the
    training set. The test set is scored once, for the final comparison, and never used to choose
    anything.
 5. **Common test set.** When cleaning strategies are compared, all of them are scored on the same
    test patients: those whose records pass every plausibility check. A deployed system would reject
-   an impossible input at entry rather than predict from it. How each strategy handles the remaining
-   records is reported separately.
+   an impossible input at entry rather than predict from it. How the final model does on the records
+   that fail the checks is reported separately (Section 9.1).
 6. **Metrics.** The primary metric is ROC AUC: how well the model ranks diseased patients above
-   healthy ones, independent of any threshold. Accuracy, sensitivity (the share of diseased patients
-   detected) and specificity (the share of healthy patients cleared) are reported at the 0.5
-   threshold and at a screening threshold chosen on training data. The Brier score and calibration
-   curves measure how far predicted risks can be trusted. Every test metric gets a 95% bootstrap
-   confidence interval, because with about 14,000 test patients a difference of one point in
-   accuracy can be noise.
+   healthy ones, independent of any cut-off. Accuracy, sensitivity (the share of diseased patients
+   detected) and specificity (the share of healthy patients cleared) are reported at the 0.5 cut-off
+   and at a screening cut-off chosen on training data. The Brier score and calibration curves measure
+   how far predicted risks can be trusted. The main results get 95% bootstrap confidence intervals:
+   every test AUC, the accuracy of each candidate, the final model's gain over the rule, the
+   differences between models and between cleaning strategies, and the AUC within each subgroup.
+   These intervals reflect which patients happen to be in the test set; they do not include the
+   randomness of training. Other figures are point estimates.
 7. **The leakage experiments (Q2) are kept separate.** They reproduce mistakes on purpose. They are
    labelled as such and never feed into the choice of the final model.
 
 ## 3. The data
 
 The dataset is read exactly as distributed. Exact duplicate records, identical in every column but
-`id`, are removed before anything else (Section 2).
+`id`, are removed before anything else, and the train/test split of Section 2 is drawn here too.
 
 <!-- code: loading -->
 
@@ -156,13 +162,22 @@ cleaning strategies. Nothing in it is learned from the data: every rule looks at
 ```python
 deduped = deduplicate(raw)
 flags = audit(deduped)
+failing = flags.any(axis=1)
+train_ids, test_ids = split_ids(raw)
+in_train = deduped["id"].isin(train_ids)
 print(f"{len(raw) - len(deduped)} exact duplicates removed")
-print(f"{flags.any(axis=1).sum():,} records ({flags.any(axis=1).mean():.1%}) fail at least one check\n")
+print(f"{failing.sum():,} records ({failing.mean():.1%}) fail at least one check")
+print(f"share with CVD, training patients: {deduped.loc[failing & in_train, 'cardio'].mean():.1%} of those "
+      f"failing a check, {deduped.loc[~failing & in_train, 'cardio'].mean():.1%} of the others\n")
 flags.sum().rename("records failing").to_frame()
 ```
 
-About 2% of records fail, and nearly all failures are blood pressures. They are not random noise.
-The most frequent impossible values show clear, repeated patterns:
+About 2% of records fail, and nearly all failures are blood pressures. They are not random in two
+ways. First, they come mostly from sick patients: among training patients, three in four records
+that fail a check (74%) belong to patients with CVD, against half of the others. Errors may have been
+more common where sick patients' records were entered, but the data cannot say why. Removing these
+records therefore removes mostly sick patients, which Section 9.1 takes into account. Second, the most
+frequent impossible values show clear, repeated patterns:
 
 ```python
 def top_values(col, n=12):
@@ -179,7 +194,8 @@ display(top_values("ap_lo"))
 - **The wrong unit.** A systolic pressure of 12, 14 or 11 is 120, 140 or 110 written in centimetres
   of mercury, the unit many people use when they say "twelve over eight".
 - **A stray minus sign.** −120 is 120.
-- **Swapped fields.** Pairs like 80/120 have systolic and diastolic entered the wrong way round.
+- **Swapped fields.** Pairs like 80/120 or 90/160 have systolic and diastolic entered the wrong way
+  round.
 
 ```python
 pairs = deduped.loc[flags["diastolic >= systolic"], ["ap_hi", "ap_lo"]].value_counts().head(8)
@@ -225,8 +241,8 @@ different diagnoses:
 
 ```python
 features_only = deduped.drop(columns=["id", "cardio"])
-groups = deduped.groupby(list(features_only.columns))["cardio"].nunique()
-print(f"{(groups > 1).sum()} groups of records identical in every feature but with different diagnoses")
+groups = deduped[in_train].groupby(list(features_only.columns))["cardio"].nunique()
+print(f"{(groups > 1).sum()} groups of training records identical in every feature but with different diagnoses")
 ```
 
 These are kept. They are a reminder that the features do not determine the diagnosis: no model can
@@ -234,18 +250,19 @@ classify all of these records correctly.
 
 ### 4.2 Three cleaning strategies
 
-Each strategy becomes its own training set (RQ2):
+Each strategy becomes its own training set (Q2):
 
 ```python
 summary = cleaning_summary(raw)
 summary.style.format({"share kept": "{:.1%}", "records": "{:,}"})
 ```
 
-`repair` corrects a blood pressure only when a recognisable entry error explains it. It turns the
-recorded value back into a plausible one with the rules shown above, applied in a fixed order: sign,
-then unit, then extra digits, then swapped fields. Anything no rule recovers is removed, and so are
-implausible heights and weights, whose errors show no pattern that would identify the true value.
-Every change is logged:
+`repair` corrects a blood pressure only when a single recognisable entry error explains it. Readings
+typed into each other's fields are swapped first, on the values as recorded, and only when the
+swapped pair is plausible. Each remaining reading may then be fixed by one of the other rules: sign,
+unit or extra digits. A record that would need two guesses (a unit fix followed by a swap, say) is
+not repaired. Anything no rule recovers is removed, and so are implausible heights and weights,
+whose errors show no pattern that would identify the true value. Every change is logged:
 
 ```python
 print(log.groupby(["field", "rule"]).size().rename("values").to_string())
@@ -262,27 +279,29 @@ replacing it.
 rows = []
 for s in STRATEGIES:
     d, _ = clean(raw, s)
-    rows.append({"strategy": s, "records": len(d),
+    d = d[d["id"].isin(train_ids)]
+    rows.append({"strategy": s, "training records": len(d),
                  "corr(systolic, cardio)": d["ap_hi"].corr(d["cardio"]),
                  "corr(diastolic, cardio)": d["ap_lo"].corr(d["cardio"]),
                  "mean systolic": d["ap_hi"].mean(), "max systolic": d["ap_hi"].max()})
 pd.DataFrame(rows).set_index("strategy")
 ```
 
-This is the most important number in the cleaning section. In the raw data, systolic blood pressure
-has almost no linear relationship with the diagnosis (r = 0.05). After either kind of cleaning it is
-the strongest single predictor (r = 0.43). Fewer than 2% of records cause this. A handful of values
-in the thousands dominate the variance and hide everything else. Anything linear, such as a
-correlation or a logistic regression on unscaled values, reads the raw data wrongly. Tree models
-split on ranks and should suffer far less. Section 9 tests whether that holds.
+This is the most important number in the cleaning section. In the raw training data, systolic blood
+pressure has almost no linear relationship with the diagnosis (r = 0.05). After either kind of
+cleaning it is the strongest single predictor (r = 0.43). Fewer than 2% of records cause this. A
+handful of values in the thousands dominate the variance and hide everything else. Anything linear,
+such as a correlation or a logistic regression on unscaled values, reads the raw data wrongly. Tree
+models split on the order of values and should suffer far less. Section 9.1 tests whether that holds.
 
 ## 5. Exploratory data analysis
 
-From here on, the analysis uses the **training patients only**, cleaned with the `drop` strategy (the
-choice of strategy is revisited in Section 9). The test patients stay unseen until Section 8.
+From here on, the analysis uses the **training patients only**, cleaned with the `drop` strategy
+(Section 9.1 compares it with the other two strategies). The test patients stay unseen until
+Section 8.
 
 The modelling table is built by the functions below. They convert units, add the derived features
-explained in Section 6, and split the patients by the fixed train/test ids of Section 2.
+explained in Section 6, and divide the patients by the fixed train/test ids of Section 2.
 
 <!-- code: features -->
 
@@ -358,45 +377,71 @@ Four factors carry most of the signal, and each rises steadily with no reversal:
 
 The three lifestyle answers barely move the rate, and two point the "wrong" way: smokers and drinkers
 have slightly *lower* disease rates than other patients. Only physical activity has the expected
-protective sign.
+protective sign. Section 5.2 checks whether this survives a fairer comparison.
 
 ### 5.2 The smoking paradox
 
 Smoking is an established cause of cardiovascular disease, so a lower rate among smokers needs an
-explanation. The first suspect is a confounder. Smoking in this data is almost entirely male, so the
-comparison is redone within each sex and age group:
+explanation. The first suspect is a confounder. Smoking in this data is almost entirely male, and
+risk rises with age, so the comparison is redone among men, age group by age group. The gap is then
+averaged over the age groups (weighted by their size), with a bootstrap confidence interval:
 
 ```python
 print("share who smoke:", train.groupby("male")["smoke"].mean().rename({0: "women", 1: "men"})
       .map("{:.1%}".format).to_dict())
 
-men = train[train["male"] == 1]
-men_band = band(men["age_years"], [0, 45, 50, 55, 60, 70], ["<45", "45-49", "50-54", "55-59", "60+"])
-by_age = men.groupby([men_band, "smoke"], observed=True)["cardio"].mean().unstack()
-by_age.columns = ["non-smokers", "smokers"]
+men = train[train["male"] == 1].copy()
+men["age band"] = band(men["age_years"], [0, 45, 50, 55, 60, 70], ["<45", "45-49", "50-54", "55-59", "60+"])
+by_age = men.groupby(["age band", "smoke"], observed=True)["cardio"].agg(["mean", "size"]).unstack()
+rate = by_age["mean"].rename(columns={0: "non-smokers", 1: "smokers"})
+
+
+def age_standardised_gap(d, col):
+    """CVD rate of the 'yes' group minus the 'no' group within each age band, averaged over the bands
+    with the band sizes as weights."""
+    r = d.groupby(["age band", col], observed=True)["cardio"].mean().unstack()
+    w = d.groupby("age band", observed=True).size()
+    return float(((r[1] - r[0]) * w).sum() / w.sum())
+
+
+rng = np.random.default_rng(SEED)
+for col, label in [("smoke", "smokers"), ("alco", "drinkers")]:
+    gap = age_standardised_gap(men, col)
+    boot = [age_standardised_gap(men.iloc[rng.integers(0, len(men), len(men))], col) for _ in range(1000)]
+    lo, hi = np.percentile(boot, [2.5, 97.5])
+    print(f"men, {label} minus the others, same age: {gap * 100:+.1f} points (95% CI {lo * 100:+.1f} to {hi * 100:+.1f})")
+print(f"men who drink: {men.loc[men['smoke'] == 1, 'alco'].mean():.0%} of smokers, "
+      f"{men.loc[men['smoke'] == 0, 'alco'].mean():.0%} of non-smokers")
 
 fig, ax = plt.subplots(figsize=(6.4, 3.4))
-x = np.arange(len(by_age))
-ax.vlines(x, by_age.min(axis=1), by_age.max(axis=1), color="#cfcec8", lw=2, zorder=1)
+x = np.arange(len(rate))
+ax.vlines(x, rate.min(axis=1), rate.max(axis=1), color="#cfcec8", lw=2, zorder=1)
 for col, colour in [("non-smokers", NO_CVD), ("smokers", CVD)]:
-    ax.plot(x, by_age[col], "o", color=colour, ms=8, label=col, zorder=2)
-ax.set_xticks(x, by_age.index)
-ax.set(xlabel="age (years)", ylabel="share with CVD", title="Men: smokers have less CVD in every age group")
+    ax.plot(x, rate[col], "o", color=colour, ms=8, label=col, zorder=2)
+ax.set_xticks(x, rate.index)
+ax.set(xlabel="age (years)", ylabel="share with CVD", title="Men: CVD rate by age group, smokers and non-smokers")
 ax.yaxis.set_major_formatter(plt.matplotlib.ticker.PercentFormatter(1, decimals=0))
 ax.legend(loc="upper left")
 fig.savefig(FIGURES / "fig3_smoking_paradox.png")
 plt.show()
-by_age.style.format("{:.1%}")
+by_age.style.format("{:.1%}", subset="mean").format("{:,}", subset="size")
 ```
 
-The paradox survives both checks. Among men (women hardly smoke here), smokers have a lower disease
-rate than non-smokers of the same age. The likeliest explanation lies in how the data was collected,
-not in biology. The diagnosis and the answers were recorded **at the same examination**, so a patient
-who already has heart disease has usually been told to quit. Such a patient answers "no" to smoking,
-which moves diseased former smokers into the non-smoker group. This effect has a name in
-epidemiology: the "sick quitter" [8].
+For smoking the paradox survives. Among men (women hardly smoke here), smokers have the same or a
+lower disease rate than non-smokers in every age group. The gap is small and uncertain in the
+youngest and oldest groups, but compared age for age, smokers have @@SMOKE_GAP@@ points less CVD, and
+the confidence interval excludes zero. For alcohol it does not survive: the age-standardised gap is
+@@ALCO_GAP@@ points and its interval includes zero. Smokers also drink far more than non-smokers
+(@@SMOKERS_DRINK@@), which this simple comparison does not separate.
 
-This has two consequences for the rest of the study:
+A plausible explanation lies in how the data was collected rather than in biology, though the data
+cannot test it: it has no "former smoker" answer. The diagnosis and the answers were recorded **at
+the same examination**. A patient who already has heart disease may have been told to quit, and then
+answers "no" to smoking, which moves diseased former smokers into the non-smoker group. This "sick
+quitter" effect was first described for alcohol [8].
+
+Two consequences for the rest of the study follow from how the data was recorded, whatever the
+explanation for smoking:
 
 1. The task is **detection of an existing disease**, not prediction of a future one. A model trained
    here can say "this profile looks like the profiles of patients who have CVD". It cannot say "this
@@ -431,9 +476,10 @@ corr["cardio"].drop("cardio").sort_values(ascending=False).rename("correlation w
 
 The last column restates Section 5.1 as single numbers. Systolic pressure, diastolic pressure, age,
 cholesterol and BMI lead, while sex and the lifestyle answers are close to zero. Among the features
-themselves, the two blood pressures are strongly correlated (about 0.7), and so are weight and BMI,
-and sex and height. For tree models this hardly matters. For logistic regression it means individual
-coefficients must be read with care, since correlated features share their effect.
+themselves, the two blood pressures are strongly correlated (0.73), and so are weight and BMI (0.86);
+sex and height moderately (0.52), and cholesterol and glucose too (0.45). For tree models this hardly
+matters. For logistic regression it means individual coefficients must be read with care, since
+correlated features share their effect.
 
 ### 5.4 What the exploration implies for modelling
 
@@ -443,8 +489,9 @@ coefficients must be read with care, since correlated features share their effec
 - **No class imbalance**: 49.5% of training patients have CVD. Oversampling methods such as SMOTE
   have nothing to fix here. In Section 9 they appear only as one of the mistakes the leakage
   experiments reproduce.
-- The lifestyle answers are weak and partly distorted by reverse causation. They are kept, because a
-  model should use what the examination records, but nothing causal is read into them.
+- The lifestyle answers are weak, and for smoking the association is probably distorted by reverse
+  causation. They are kept, because a model should use what the examination records, but nothing
+  causal is read into them.
 
 ## 6. Feature engineering
 
@@ -482,7 +529,7 @@ The derived category summarises both pressures in the terms clinicians act on, a
 rises steadily across it: from about one patient in five at normal pressure to most patients at
 stage 2.
 
-Two points about these features:
+Three points about these features:
 
 - **They are fixed formulas, not learned transformations.** Like the cleaning rules, they cannot
   leak test information.
@@ -491,23 +538,31 @@ Two points about these features:
   combination precomputed, since a split on BMI replaces many splits on height and weight. For
   logistic regression the overlap is handled by regularisation. Section 7 checks whether the derived
   features help at all, by training the same models with and without them.
+- **The stage builds the guideline's thresholds into the data.** It steps at 120, 130 and 140 mmHg
+  systolic, so any model can use those thresholds directly. Section 8.4 keeps this in mind when
+  reading the shape of the model.
+
 ## 7. Models
 
 ### 7.1 What is compared
 
 Every candidate is evaluated with 5-fold cross-validation on the training patients, using the same
-five folds. All models are implemented with scikit-learn [12]. The test patients are not touched in this section.
+five folds. All models are implemented with scikit-learn [12]. The test patients are not touched in
+this section.
 
 | Candidate | Type | What it uses | Settings searched |
 |---|---|---|---|
 | Rule: systolic ≥ 130 mmHg | clinical baseline | one reading, guideline threshold | none |
 | Systolic pressure alone | clinical baseline | one reading; cut-off chosen on the training folds | none |
 | Framingham (published) | clinical baseline | age, sex, BMI, systolic pressure, smoking, diabetes | none: the 2008 equations as published |
-| Framingham form (refit) | logistic regression | the same terms, one equation per sex | coefficients refitted on these patients |
-| Logistic regression | linear model | all 15 features, standardised | regularisation strength C |
-| Random forest | tree ensemble | all 15 features | leaf size, features per split |
-| Gradient boosting | tree ensemble (histogram GBDT) | all 15 features | learning rate, tree size, leaf size |
-| Neural network (MLP) | multilayer perceptron | all 15 features, standardised | layer sizes, weight decay |
+| Framingham form (refit) | logistic regression | the same terms, one equation per sex | 1 setting: coefficients refitted on these patients |
+| Logistic regression | linear model | all 15 features, standardised | 4 settings: regularisation strength C |
+| Random forest | tree ensemble (200 trees) | all 15 features | 9 settings: leaf size, features per split |
+| Gradient boosting | tree ensemble (histogram GBDT, early stopping) | all 15 features | 27 settings: learning rate, tree size, leaf size |
+| Neural network (MLP) | multilayer perceptron | all 15 features, standardised | 16 settings: layer sizes, weight decay |
+
+The search grids differ in size: the more settings a model has that matter, the more were tried.
+The effect of this on the comparison is examined in Section 7.5.
 
 Some notes on the baselines:
 
@@ -516,16 +571,18 @@ Some notes on the baselines:
   existing disease. The dataset also has no field for blood-pressure treatment, so the equation for
   untreated patients is used, and no diabetes field, so glucose "well above normal" stands in for
   diabetes. Using its risk to rank these patients is therefore a reference point, not a fair contest.
-  The refitted version keeps Framingham's functional form but learns the weights from these
-  patients. It shows how much of any gap comes from the form and how much from the population.
+  The refitted version keeps Framingham's terms but learns the weights from these patients. It shows
+  how much of any gap comes from the terms and how much from the weights.
 - **Two baselines need a cut-off.** Systolic pressure alone and the published Framingham risk are
   continuous scores, so the cut-off that classifies the four training folds most accurately is
   applied to the fifth. Their AUC needs no cut-off.
 
 **Selection rule, fixed in advance.** The final model is the *simplest* machine-learning model whose
-mean cross-validated AUC is within one standard error of the best one. The order of simplicity is:
-Framingham form, logistic regression, gradient boosting, random forest, neural network. A difference
-smaller than the fold-to-fold noise is not evidence, so it should not buy complexity.
+mean cross-validated AUC is within one standard error of the best one. The order of simplicity
+follows model size: the Framingham form and logistic regression (a few coefficients), then gradient
+boosting (an ensemble of small trees, at most 31 leaves each), then random forest (200 deep trees),
+then the neural network. A difference smaller than the fold-to-fold noise is not evidence, so it
+should not buy complexity.
 
 ### 7.2 Cross-validated comparison
 
@@ -566,26 +623,40 @@ plt.show()
 
 **Every machine-learning model beats every clinical baseline, but the margins are small.**
 
-- **Best model.** Gradient boosting reaches a cross-validated AUC of 0.800 and an accuracy of
-  73.5%. The guideline rule (systolic ≥ 130 mmHg) is right for 71.3% of patients. Out of every 1,000
-  patients, the best model classifies about 22 more correctly than one blood-pressure reading.
-- **The flexible models are tied.** Gradient boosting, random forest and the neural network lie
-  within 0.002 AUC of each other, close to the fold-to-fold standard deviation (about 0.003).
-  Logistic regression is 0.010 behind, so the interactions and curves that trees and networks can
-  represent are worth a little, but only a little.
-- **The guideline's threshold is the best cut-off.** When systolic pressure alone is given the
-  cut-off that classifies the training folds most accurately, the data chooses 130 mmHg, the
-  guideline's own value: the accuracy, sensitivity and specificity are identical to the rule's. The
-  AUC differs only because the rule turns the reading into a yes/no answer.
+- **Best model.** @@CV_BEST@@
+- **The flexible models are close.** @@CV_FLEXIBLE@@
+- **The guideline's threshold is also the most accurate cut-off.** When systolic pressure alone is
+  given the cut-off that classifies the training folds most accurately, the search lands on 130 mmHg,
+  the guideline's own value, in every fold: the accuracy, sensitivity and specificity are identical to
+  the rule's. (Almost all readings are multiples of 10, so the search chooses among a handful of
+  values; this is a consistency check, not a discovery.) The AUC differs only because the rule turns
+  the reading into a yes/no answer.
 - **The published Framingham score ranks these patients worse than systolic pressure alone**
-  (AUC 0.696 vs 0.751). Refitting the same five terms on these patients raises it to 0.780. The
-  functional form is sound; its weights do not transfer to a different population and a different
-  question (existing disease here, a first event within ten years in Framingham). A risk score
-  carried over to a new population has to be recalibrated before its numbers mean anything.
+  (AUC @@CV_FRAM@@ vs @@CV_SBP@@). Refitting the same five terms on these patients raises it to
+  @@CV_FRAM_REFIT@@: the terms are informative, but the published weights do not transfer to this
+  population and question (existing disease here, a first event within ten years in Framingham).
+  Section 8.1 shows where they go wrong.
+
+How flat is each search? If the best setting is barely better than its neighbours, nothing much
+hinges on the grid:
+
+```python
+flat = []
+for name, s in searches.items():
+    scores = np.sort(s.cv_results_["mean_test_auc"])[::-1]
+    flat.append({"model": name, "settings tried": len(scores), "best": scores[0],
+                 "second best": scores[1] if len(scores) > 1 else np.nan,
+                 "median setting": float(np.median(scores)), "worst": scores[-1],
+                 "best setting": comparison.loc[name, "best setting"]})
+(pd.DataFrame(flat).set_index("model")
+ .style.format("{:.4f}", subset=["best", "second best", "median setting", "worst"], na_rep="-"))
+```
+
+@@CV_FLATNESS@@
 
 The cross-validated score of each model's *best* setting is slightly optimistic, because that
-setting was chosen on the same folds. With grids this small and 55,000 patients the bias is tiny, but
-it is one reason the test set in Section 8 has the final word.
+setting was chosen on the same folds. With these grids and 55,000 patients the bias is small, but it
+is one reason the test set in Section 8 has the final word.
 
 ### 7.3 Do the derived features help?
 
@@ -599,16 +670,15 @@ features_effect["gain"] = features_effect["recorded + derived"] - features_effec
 features_effect.style.format("{:.4f}")
 ```
 
-The derived features change the AUC by less than 0.001 in either direction. That is well inside the
-noise. Both models can build what they need from the recorded values on their own, which is a common
-finding with tabular data this simple. The derived features stay in the final model anyway: they
-cost nothing in accuracy, and they make the explanations in Section 8 easier to read. A clinician
+@@DERIVED@@ Both models can build what they need from the recorded values on their own, which is a
+common finding with tabular data this simple. The derived features stay in the final model anyway:
+they cost nothing in accuracy, and they make the explanations in Section 8 easier to read. A clinician
 thinks in BMI and blood-pressure stages, not in height and weight.
 
 ### 7.4 Would more data help?
 
 The same models are trained on growing shares of a training fold. If the curve is still rising at
-the full training set, more patients would help. If it is flat, the limit lies in the features.
+the full training set, more patients would help. If it has levelled off, the limit lies elsewhere.
 
 ```python
 curve = learning_curve_auc(train, {name: searches[name].best_estimator_
@@ -627,19 +697,7 @@ plt.show()
 curve.pivot(index="patients", columns="model", values="auc").style.format("{:.4f}")
 ```
 
-The two curves tell different stories:
-
-- **Logistic regression has learned all it can from about 2,000 patients.** Its validation AUC moves
-  by only 0.003 between 2,000 and 44,000 patients.
-- **Gradient boosting needs more data, then slows down.** It needs more patients to estimate its
-  interactions, overtakes logistic regression at around 2,000 patients, and keeps improving. But the
-  last doubling, from 22,000 to 44,000 patients, adds only 0.0015.
-
-More patients of the same kind would therefore add very little. **The ceiling of about 0.80 AUC (73%
-accuracy) is set by the information in the eleven recorded values, not by the amount of data or the
-choice of algorithm.** Widening the search grids points the same way. The first run placed the best
-gradient-boosting and neural-network settings at the edge of their grids, so the grids were
-extended. Both models moved by less than 0.0005 AUC, so they sit on a plateau.
+@@LEARNING@@
 
 ### 7.5 The chosen model
 
@@ -647,16 +705,16 @@ extended. Both models moved by less than 0.0005 AUC, so they sit on a plateau.
 chosen = choose_model(comparison)
 ml = comparison[comparison["kind"] == "machine learning"]
 best = ml["auc"].idxmax()
-print(f"best cross-validated AUC: {best} ({ml.loc[best, 'auc']:.4f} ± {ml.loc[best, 'auc_sd']:.4f})")
-print(f"one standard error: {ml.loc[best, 'auc_sd'] / np.sqrt(CV_FOLDS):.4f}")
-print(f"chosen by the one-standard-error rule: {chosen} ({ml.loc[chosen, 'auc']:.4f}), "
-      f"setting: {ml.loc[chosen, 'best setting']}")
+se = ml.loc[best, "auc_sd"] / np.sqrt(CV_FOLDS)
+print(f"best cross-validated AUC: {best} ({ml.loc[best, 'auc']:.4f}, fold SD {ml.loc[best, 'auc_sd']:.4f})")
+print(f"one standard error: {se:.4f}; within it of the best: {', '.join(ml.index[ml['auc'] >= ml.loc[best, 'auc'] - se])}")
+print(f"chosen by the one-standard-error rule: {chosen}, setting: {ml.loc[chosen, 'best setting']}")
+gb, rf = searches["Gradient boosting"].best_estimator_, searches["Random forest"].best_estimator_
+print(f"model size: gradient boosting {gb.n_iter_} trees of at most {gb.max_leaf_nodes} leaves; "
+      f"random forest {len(rf.estimators_)} trees with {sum(t.tree_.n_leaves for t in rf.estimators_):,} leaves in all")
 ```
 
-Gradient boosting has the best cross-validated AUC, and no simpler model comes within one standard
-error of it. Random forest misses by 0.0013 against a margin of 0.0012, a near tie, but the rule was
-fixed in advance, and gradient boosting is also faster to train. **Gradient boosting is the final
-model.** The next section scores it, and every other candidate, once on the test patients.
+@@CHOICE@@
 
 ## 8. The final model on the test set
 
@@ -667,10 +725,11 @@ exactly once:
 
 - The machine-learning models use their selected settings, refitted on all training patients.
 - The baselines that need a cut-off use the one chosen on the training patients.
-- AUC confidence intervals come from 2,000 bootstrap resamples of the test patients.
+- Confidence intervals come from 2,000 bootstrap resamples of the test patients, the same resamples
+  for every candidate.
 
-The helpers for the test-set evaluation: paired bootstrap intervals, out-of-fold predictions and the
-screening cut-off.
+The helpers for the test-set evaluation: paired bootstrap intervals, out-of-fold predictions, and the
+cut-offs chosen on training data.
 
 <!-- code: evaluation -->
 
@@ -679,8 +738,9 @@ from sklearn.metrics import roc_auc_score
 
 final = searches[chosen].best_estimator_
 y_test = test["cardio"]
+RULE = f"Rule: systolic ≥ {SBP_RULE} mmHg"
 test_scores = {
-    f"Rule: systolic ≥ {SBP_RULE} mmHg": (test["ap_hi"] >= SBP_RULE).astype(float),
+    RULE: (test["ap_hi"] >= SBP_RULE).astype(float),
     "Systolic pressure alone": test["ap_hi"].astype(float),
     "Framingham (published)": framingham_risk(test),
     **{name: s.predict_proba(test[FEATURES])[:, 1] for name, s in searches.items()},
@@ -688,26 +748,48 @@ test_scores = {
 cutoffs = {name: 0.5 for name in test_scores}
 cutoffs["Systolic pressure alone"] = accuracy_threshold(train["cardio"], train["ap_hi"])
 cutoffs["Framingham (published)"] = accuracy_threshold(train["cardio"], framingham_risk(train))
+predictions = {name: (np.asarray(score) >= cutoffs[name]).astype(int) for name, score in test_scores.items()}
 
 auc_boot = bootstrap(y_test, test_scores, roc_auc_score)
+acc_boot = bootstrap(y_test, predictions, lambda y, p: (y == p).mean())
 rows = []
 for name, score in test_scores.items():
     m = classification_metrics(y_test, score, cutoffs[name])
     lo, hi = interval(auc_boot[name])
-    rows.append({"model": name, "test AUC": m["auc"], "95% CI": f"{lo:.3f}-{hi:.3f}",
+    alo, ahi = interval(acc_boot[name])
+    rows.append({"model": name, "test AUC": m["auc"], "AUC 95% CI": f"{lo:.3f}-{hi:.3f}",
                  "CV AUC": comparison.loc[name, "auc"], "accuracy": m["accuracy"],
+                 "accuracy 95% CI": f"{alo:.1%}-{ahi:.1%}",
                  "sensitivity": m["sensitivity"], "specificity": m["specificity"]})
 test_table = pd.DataFrame(rows).set_index("model").sort_values("test AUC", ascending=False)
 test_table.to_csv(ROOT / "outputs" / "test_results.csv")
+gain_lo, gain_hi = interval(acc_boot[chosen] - acc_boot[RULE])
+print(f"{chosen} minus the rule, accuracy: {(test_table.loc[chosen, 'accuracy'] - test_table.loc[RULE, 'accuracy']) * 100:+.1f} "
+      f"points (95% CI {gain_lo * 100:+.1f} to {gain_hi * 100:+.1f})")
 test_table.style.format({"test AUC": "{:.3f}", "CV AUC": "{:.3f}", "accuracy": "{:.1%}",
                          "sensitivity": "{:.1%}", "specificity": "{:.1%}"})
 ```
 
-**The test set confirms the cross-validation.** Every candidate's test AUC is within 0.004 of its
-cross-validated AUC, and the ranking is unchanged. The models did not overfit, and choosing settings
-on the cross-validation folds did not flatter them. On patients it has never seen, gradient boosting
-reaches an AUC of 0.804 (95% CI 0.797-0.811) and 73.6% accuracy, against 71.3% for the
-systolic ≥ 130 rule.
+@@TEST_RESULTS@@
+
+Why does the published Framingham score rank these patients so poorly? Its weights can be checked
+one at a time:
+
+```python
+fram = framingham_risk(test)
+rows = []
+for label, mask in [("women", test["male"] == 0), ("men", test["male"] == 1), ("everyone", test["male"] >= 0)]:
+    rows.append({"patients": label, "share with CVD": y_test[mask].mean(), "mean Framingham risk": fram[mask].mean(),
+                 "Framingham AUC": roc_auc_score(y_test[mask], fram[mask]),
+                 "systolic alone AUC": roc_auc_score(y_test[mask], test.loc[mask, "ap_hi"])})
+print("published Framingham AUC with the smoking term switched off:",
+      f"{roc_auc_score(y_test, framingham_risk(test.assign(smoke=0))):.3f}")
+(pd.DataFrame(rows).set_index("patients")
+ .style.format({"share with CVD": "{:.1%}", "mean Framingham risk": "{:.1%}", "Framingham AUC": "{:.3f}",
+                "systolic alone AUC": "{:.3f}"}))
+```
+
+@@FRAMINGHAM@@
 
 ```python
 from sklearn.metrics import roc_curve
@@ -717,7 +799,7 @@ for name, colour, lw in [(chosen, NO_CVD, 2.2), ("Logistic regression", MUTED, 1
                          ("Systolic pressure alone", "#9b9a94", 1.4), ("Framingham (published)", "#c9c8c1", 1.4)]:
     fpr, tpr, _ = roc_curve(y_test, test_scores[name])
     ax.plot(fpr, tpr, color=colour, lw=lw, label=f"{name} (AUC {roc_auc_score(y_test, test_scores[name]):.3f})")
-rule = classification_metrics(y_test, test_scores[f"Rule: systolic ≥ {SBP_RULE} mmHg"], 0.5)
+rule = classification_metrics(y_test, test_scores[RULE], 0.5)
 ax.plot(1 - rule["specificity"], rule["sensitivity"], "D", color=CVD, ms=8, label=f"rule: systolic ≥ {SBP_RULE}")
 ax.plot([0, 1], [0, 1], ls="--", lw=0.8, color=MUTED)
 ax.set(xlabel="1 − specificity (healthy patients flagged)", ylabel="sensitivity (diseased patients detected)",
@@ -727,64 +809,69 @@ fig.savefig(FIGURES / "fig8_roc_test.png")
 plt.show()
 ```
 
-The rule is one point on the ROC plane; the model is a whole curve. Holding the rule's specificity
-fixed shows what the model adds at that point:
+The rule is one point on the ROC plane; the model is a whole curve. To compare them at the rule's own
+operating point without touching the test set, the model's cut-off is chosen on the training
+patients: the lowest cut-off at which the model, using out-of-fold predictions, clears at least as
+many healthy training patients as the rule does. Both are then scored once on the test patients:
 
 ```python
-rule_spec = rule["specificity"]
-fpr, tpr, thresholds = roc_curve(y_test, test_scores[chosen])
-at_rule = tpr[np.searchsorted(fpr, 1 - rule_spec, side="right") - 1]
-n_sick = int(y_test.sum())
-print(f"at the rule's specificity ({rule_spec:.1%}): rule detects {rule['sensitivity']:.1%} of diseased patients, "
-      f"{chosen.lower()} {at_rule:.1%}")
-print(f"that is {round((at_rule - rule['sensitivity']) * n_sick):,} more of the {n_sick:,} diseased test patients, "
-      f"with the same number of healthy patients flagged")
+oof = out_of_fold(final, train)
+rule_specificity_train = (train.loc[train["cardio"] == 0, "ap_hi"] < SBP_RULE).mean()
+cut_rule = threshold_at_specificity(train["cardio"], oof, rule_specificity_train)
+flags_model = (np.asarray(test_scores[chosen]) >= cut_rule).astype(int)
+flags_rule = predictions[RULE]
+y = y_test.to_numpy()
+detected = bootstrap(y, {"model": flags_model, "rule": flags_rule}, lambda t, f: int(((f == 1) & (t == 1)).sum()))
+flagged = bootstrap(y, {"model": flags_model, "rule": flags_rule}, lambda t, f: int(((f == 1) & (t == 0)).sum()))
+more = int(((flags_model == 1) & (y == 1)).sum() - ((flags_rule == 1) & (y == 1)).sum())
+extra = int(((flags_model == 1) & (y == 0)).sum() - ((flags_rule == 1) & (y == 0)).sum())
+lo, hi = interval(detected["model"] - detected["rule"])
+flo, fhi = interval(flagged["model"] - flagged["rule"])
+print(f"cut-off chosen on training patients: {cut_rule:.3f} (rule's specificity there: {rule_specificity_train:.1%})")
+for label, f in [("rule", flags_rule), (chosen, flags_model)]:
+    m = classification_metrics(y, f, 0.5)
+    print(f"  {label:<20} test sensitivity {m['sensitivity']:.1%}, specificity {m['specificity']:.1%}")
+print(f"diseased test patients detected by the model and not the rule: {more:+,} (95% CI {lo:+.0f} to {hi:+.0f}) "
+      f"of {int(y.sum()):,}")
+print(f"healthy test patients flagged, model minus rule: {extra:+,} (95% CI {flo:+.0f} to {fhi:+.0f}) "
+      f"of {int((y == 0).sum()):,}")
 ```
 
-At the rule's own operating point, the model finds 66.2% of the diseased patients instead of 61.8%:
-301 more of the 6,785 diseased test patients, with no extra healthy patients flagged. This is the
-most concrete form of the answer to Q1. The gain is real but modest, about one more patient detected
-for every 23 diseased patients examined.
+@@RULE_POINT@@
 
-### 8.2 Are the differences real?
+### 8.2 How large are the differences?
 
 The same bootstrap resamples score every model, so each AUC difference can be given its own
-interval. If an interval excludes zero, the difference is unlikely to be chance.
+interval. These intervals cover the sampling of test patients only: each model was fitted once, with
+one seed. Five comparisons are made at once, so a Bonferroni-adjusted interval (99%) is shown too.
 
 ```python
 pairs = [(chosen, other) for other in ["Random forest", "Neural network (MLP)", "Logistic regression",
-                                        "Framingham form (refit)", "Systolic pressure alone"]]
+                                        "Framingham form (refit)", "Systolic pressure alone"] if other != chosen]
 diffs = []
 for a, b in pairs:
     d = auc_boot[a] - auc_boot[b]
     lo, hi = interval(d)
-    diffs.append({"comparison": f"{a} − {b}", "AUC difference": roc_auc_score(y_test, test_scores[a])
-                  - roc_auc_score(y_test, test_scores[b]), "95% CI": f"{lo:+.4f} to {hi:+.4f}",
-                  "excludes zero": lo > 0 or hi < 0})
+    blo, bhi = interval(d, level=1 - 0.05 / len(pairs))
+    diffs.append({"comparison": f"{a} − {b}",
+                  "AUC difference": roc_auc_score(y_test, test_scores[a]) - roc_auc_score(y_test, test_scores[b]),
+                  "95% CI": f"{lo:+.4f} to {hi:+.4f}", f"{1 - 0.05 / len(pairs):.0%} CI (adjusted)": f"{blo:+.4f} to {bhi:+.4f}"})
 pd.DataFrame(diffs).set_index("comparison").style.format({"AUC difference": "{:+.4f}"})
 ```
 
-All five intervals exclude zero, but they mean different things:
-
-- **Over random forest and the neural network**, gradient boosting leads by less than 0.002 AUC.
-  With 13,722 test patients even that is statistically detectable, but it would not change a single
-  clinical decision in any meaningful way. The three flexible models are equally good in practice.
-- **Over logistic regression** the lead is 0.012. Small, but real: the trees capture something a
-  linear model on these features cannot (Section 8.4 shows what).
-- **Over Framingham's form refitted** (0.024) and **over systolic pressure alone** (0.050), the gaps
-  are clear.
+@@DIFFERENCES@@
 
 ### 8.3 Choosing the threshold
 
 A predicted risk becomes a verdict only through a cut-off. At 0.5 the model maximises accuracy. A
 screening programme usually cares more about not missing sick patients, so a second cut-off is
 chosen **on the training patients**: the highest one that detects at least 80% of the diseased
-training patients, using predictions from models that did not see them (out-of-fold).
+training patients, using predictions from models that did not see them (the out-of-fold predictions
+of Section 8.1).
 
 ```python
 from sklearn.metrics import confusion_matrix
 
-oof = out_of_fold(final, train)
 cut_screen = screening_threshold(train["cardio"], oof, 0.80)
 risk_test = test_scores[chosen]
 
@@ -809,19 +896,16 @@ plt.show()
 pd.DataFrame(summary).set_index("cut-off").drop(columns="auc").style.format("{:.1%}")
 ```
 
-The screening cut-off, chosen on the training patients alone, detects 80.1% of the diseased test
-patients: the target carries over to unseen patients. The price is specificity. At 0.50 the model
-misses 2,112 of the 6,785 diseased test patients and flags 1,510 of the 6,937 healthy ones. At the
-screening cut-off it misses 1,347 and flags 2,476. Which trade-off is right is not a statistical
-question. It depends on what follows a positive result. For a cheap follow-up examination, the
-screening cut-off is the sensible choice.
+@@THRESHOLDS@@
 
 ### 8.4 What drives the predictions
 
-Two complementary views. **Grouped permutation importance** asks how much test AUC is lost when a
-factor is scrambled across patients. Related features are scrambled together, so the four
-blood-pressure features cannot cover for one another. **Partial dependence** asks how the average
-predicted risk changes as one factor is varied for everyone.
+Three complementary views. **Grouped permutation importance** asks how much test AUC is lost when a
+factor is scrambled across patients, that is, how much this fitted model leans on it. Related
+features are scrambled together, so the blood-pressure features cannot cover for one another.
+**Retraining without a factor** asks a different question: what a model of the same kind can do
+without it. **Partial dependence** asks how the average predicted risk changes as one factor is
+varied for everyone.
 
 <!-- code: explanation -->
 
@@ -840,13 +924,15 @@ fig.savefig(FIGURES / "fig10_importance.png")
 plt.show()
 ```
 
-**Blood pressure dominates.** Scrambling the five blood-pressure features costs 0.21 AUC: without
-them the AUC would fall from 0.80 to about 0.59. Age (0.036) and cholesterol (0.030) follow,
-and body size adds a little (0.007). Glucose, the three lifestyle answers and sex together contribute
-almost nothing. This matches the exploratory analysis in Section 5.
+```python
+retrained = drop_group_importance(final, train)
+retrained.style.format("{:.4f}")
+```
+
+@@IMPORTANCE@@
 
 ```python
-curves = [("ap_hi", range(100, 191, 5), "systolic pressure (mmHg)"),
+curves = [("ap_hi", range(100, 181, 10), "systolic pressure (mmHg)"),
           ("age_years", range(40, 66, 2), "age (years)"),
           ("weight", range(50, 121, 5), "weight (kg)"),
           ("cholesterol", [1, 2, 3], "cholesterol (1 normal - 3 well above)"),
@@ -871,27 +957,15 @@ fig.savefig(FIGURES / "fig11_partial_dependence.png")
 plt.show()
 ```
 
-The partial-dependence curves show the *shape* of each effect, and why the trees beat logistic
-regression:
-
-- **Systolic pressure works like a switch, not a slope.** The average predicted risk stays around
-  30-40% below 125 mmHg, climbs steeply between 125 and 150 mmHg, and then stays flat at about 84%.
-  A logistic regression on raw pressure has to draw one straight line in log-odds through this
-  S-shape. The trees follow it. The steep part sits exactly on the guideline's stage 1 and stage 2
-  thresholds (130 and 140 mmHg).
-- **Age, weight and cholesterol raise the risk steadily.** Age goes from about 38% at 40 to 65% at 64,
-  and cholesterol "well above normal" adds about 25 percentage points.
-- **Glucose, smoking and alcohol are flat or slightly *protective*.** This is the reverse-causation
-  pattern from Section 5.2. The model has learned the data correctly, and the data reflects patients
-  who changed their habits after diagnosis. **These curves describe associations in this dataset and
-  must not be read as causal effects**: nothing here suggests that smoking is harmless.
+@@PARTIAL_DEPENDENCE@@
 
 ### 8.5 A points score a doctor can use on paper
 
 If the best model gains only a little over simpler ones, the most useful result might be a
 transparent score. Here each factor is cut into clinical bands, a logistic regression is fitted on
 the bands, and its coefficients are rounded to whole points (one point = 0.1 in log-odds). The total
-then maps to a risk.
+then maps to a risk: the share of training patients with CVD at that total, smoothed so that more
+points always mean more risk.
 
 <!-- code: points score -->
 
@@ -901,60 +975,47 @@ card = points.table()
 card.set_index(["factor", "band"])
 ```
 
-The scorecard reads like the model. Systolic pressure earns up to 27 points, age up to 11,
-cholesterol up to 11, and BMI up to 4. The lifestyle answers and high glucose earn *negative* points,
-for the reverse-causation reason above. No clinician could hand out a score that rewards smoking,
-and these factors carry almost no information anyway (Section 8.4). So a **clinical version** keeps
-only the four factors with a sound direction: age, systolic pressure, BMI and cholesterol.
+@@FULL_CARD@@
 
 ```python
-test_scores["Points score"] = points.predict_proba(test)
-boot_points = bootstrap(y_test, {"Points score": test_scores["Points score"], chosen: test_scores[chosen]},
-                               roc_auc_score)
-m = classification_metrics(y_test, test_scores["Points score"], 0.5)
-lo, hi = interval(boot_points["Points score"])
-d_lo, d_hi = interval(boot_points[chosen] - boot_points["Points score"])
-print(f"points score on the test patients: AUC {m['auc']:.3f} ({lo:.3f}-{hi:.3f}), accuracy {m['accuracy']:.1%}, "
-      f"sensitivity {m['sensitivity']:.1%}, specificity {m['specificity']:.1%}")
-print(f"{chosen} minus points score: AUC {roc_auc_score(y_test, test_scores[chosen]) - m['auc']:+.4f} "
-      f"(95% CI {d_lo:+.4f} to {d_hi:+.4f})")
+clinical = PointsScore(factors=CLINICAL_FACTORS).fit(train, train["cardio"])
+test_scores["Points score (all factors)"] = points.predict_proba(test)
+test_scores["Points score (clinical)"] = clinical.predict_proba(test)
+cards = ["Points score (all factors)", "Points score (clinical)"]
+boot_cards = bootstrap(y_test, {k: test_scores[k] for k in cards + [chosen]}, roc_auc_score)
+for name in cards + ["Logistic regression", chosen]:
+    m = classification_metrics(y_test, test_scores[name], 0.5)
+    ci = "(95% CI {:.3f}-{:.3f})".format(*interval(boot_cards[name])) if name in boot_cards else ""
+    print(f"{name:<28} AUC {m['auc']:.3f} {ci:<20} accuracy {m['accuracy']:.1%}")
+lo, hi = interval(boot_cards[chosen] - boot_cards["Points score (clinical)"])
+gap = roc_auc_score(y_test, test_scores[chosen]) - roc_auc_score(y_test, test_scores["Points score (clinical)"])
+print(f"{chosen} minus the clinical card: AUC {gap:+.4f} (95% CI {lo:+.4f} to {hi:+.4f})")
+clinical.table().set_index(["factor", "band"]).T
+```
 
-totals = points.total(test)
+```python
+totals = clinical.total(test)
 observed = test.groupby(totals)["cardio"].agg(["mean", "size"])
 observed = observed[observed["size"] >= 50]
+grid = np.arange(totals.min(), totals.max() + 1)
 fig, ax = plt.subplots(figsize=(6.6, 3.5))
 ax.scatter(observed.index, observed["mean"], s=np.sqrt(observed["size"]) * 2, color=NO_CVD, alpha=0.8,
-           label="observed share with CVD (test, ≥ 50 patients)")
-grid = np.arange(observed.index.min(), observed.index.max() + 1)
-ax.plot(grid, points.risk_by_total(grid), color=CVD, lw=2, label="risk the score assigns")
-ax.set(xlabel="total points", ylabel="share with CVD", title="Points score: total points against observed risk")
+           label="observed share with CVD (test patients; totals with ≥ 50)")
+ax.plot(grid, clinical.risk_by_total(grid), color=CVD, lw=2, label="risk the card assigns (from training patients)")
+ax.set(xlabel="total points", ylabel="share with CVD", title="Clinical points score: total points against observed risk")
 ax.yaxis.set_major_formatter(plt.matplotlib.ticker.PercentFormatter(1, decimals=0))
 ax.legend(loc="upper left", fontsize=8)
 fig.savefig(FIGURES / "fig12_points_score.png")
 plt.show()
 ```
 
-```python
-clinical = PointsScore(factors=CLINICAL_FACTORS).fit(train, train["cardio"])
-test_scores["Points score (clinical, 4 factors)"] = clinical.predict_proba(test)
-for name in ["Points score", "Points score (clinical, 4 factors)", "Logistic regression", chosen]:
-    m = classification_metrics(y_test, test_scores[name], 0.5)
-    print(f"{name:<38} AUC {m['auc']:.3f}   accuracy {m['accuracy']:.1%}")
-clinical.table().set_index(["factor", "band"]).T
-```
-
-**Dropping the four questionable factors costs almost nothing.** The four-factor clinical scorecard
-reaches an AUC of 0.793 and 72.3% accuracy: exactly logistic regression on all fifteen features, and
-0.011 AUC below gradient boosting. A doctor with a pen can add up four numbers (age, systolic
-pressure, BMI, cholesterol) and get within about one point of accuracy of the best machine-learning
-model. This is in line with Rudin's argument that for tabular problems like this one, an
-interpretable model is often nearly as accurate as a black box [9].
+@@CLINICAL_CARD@@
 
 ## 9. Reliability
 
 Section 8 measured how well the model works. This section asks how far those numbers can be
-trusted: how they depend on data handling choices (Q2), and whether the predicted risks hold up as
-risks, for every kind of patient (Q3).
+trusted: how they depend on data-handling choices (Q2), and whether the predicted risks hold up as
+risks, for different kinds of patients (Q3).
 
 ### 9.1 Does the cleaning strategy matter?
 
@@ -963,39 +1024,40 @@ training data, on the `drop` training data and on the `repair` training data. Al
 scored on the same test patients (those whose records pass every check), so only the training data
 differs.
 
-The reliability checks of this section: the cleaning-strategy comparison, a minimal SMOTE, the three
-deliberate mistakes, subgroup metrics and predictive value at other prevalences.
+The reliability checks of this section: the cleaning-strategy comparison, the test patients that
+`drop` removes, a minimal SMOTE, the three deliberate mistakes, subgroup metrics and predictive value
+at other prevalences.
 
 <!-- code: reliability -->
 
 ```python
 strategies = strategy_comparison({"Gradient boosting": final, "Logistic regression": searches["Logistic regression"].best_estimator_})
-(strategies.pivot(index="strategy", columns="model", values=["test AUC", "test accuracy"])
- .reindex(list(STRATEGIES)).style.format("{:.4f}"))
+strategies.set_index(["model", "strategy"]).style.format(
+    {"training patients": "{:,}", "test AUC": "{:.4f}", "test accuracy": "{:.1%}", "AUC change vs drop": "{:+.4f}"})
 ```
 
-The answer depends on the model, exactly as Section 4.3 predicted:
+@@STRATEGIES@@
 
-- **Gradient boosting does not care.** Its test AUC is 0.804 whether it is trained on the raw,
-  dropped or repaired data. Trees split on the order of values, so a pressure of 16,020 mmHg simply
-  lands in the top branch with every other high reading.
-- **Logistic regression is hurt by the raw data.** Its AUC falls from 0.793 to 0.776. A handful of
-  absurd values pull its single straight-line coefficient for blood pressure towards zero, which
-  drowns out the strongest predictor.
-- **Repairing and dropping give the same result.** The 1,257 repaired records are under 2% of the
-  data, too few to change what the model learns. Repair keeps more patients, but its value lies in
-  not discarding real people rather than in accuracy.
+The common test set leaves out the test patients whose records fail a check. The protocol promised
+to report how the final model does on them:
 
-The practical lesson: cleaning is essential for linear models and for any analysis that reads
-coefficients or correlations (Section 4.3), even when a tree model would have survived without it.
+```python
+excluded = excluded_test_patients(final)
+excluded.style.format({"patients": "{:,}", "share with CVD": "{:.1%}", "AUC": "{:.3f}", "accuracy": "{:.1%}"},
+                      na_rep="-")
+```
+
+@@EXCLUDED@@
 
 ### 9.2 How mistakes inflate reported accuracy
 
 Papers on this dataset report accuracies from 73% [5] to 94.5% [7]. This experiment reproduces three
 mistakes common in published machine-learning work on medical data and measures the accuracy each
-one would let a study report. Each mistake is shown next to the honest figure for the same model.
-These pipelines are wrong on purpose, and none of them feeds into the model chosen above. Which
-mistakes, if any, particular papers made cannot be known from here.
+one would let a study report, next to the honest figure for the same model. These pipelines are
+wrong on purpose, and none of them feeds into the model chosen above. They show what *can* produce
+high accuracies on this data; which mistakes, if any, particular papers made cannot be known without
+their code. Leakage is not the only route to a flattering figure either: removing hard records from
+the test set, or a small test set, can also raise a reported accuracy.
 
 ```python
 t0 = time.time()
@@ -1005,27 +1067,7 @@ print(f"leakage experiments: {time.time() - t0:.0f} s")
 leakage.style.format({"reported accuracy": "{:.1%}"}).hide(axis="index")
 ```
 
-The same data can "report" anything from 64% to 99.9% accuracy, depending on how the evaluation is
-set up:
-
-1. **Accuracy measured on the training patients.** A forest of fully grown trees memorises its
-   training patients and scores 99.9% on them, against 71.0% on patients it has never seen. Any
-   figure that does not come from held-out patients says nothing about the model.
-2. **SMOTE before the split** [10]. Synthetic patients are interpolated between real neighbours,
-   so after a random split most test patients have a near-twin in the training set. A one-nearest-
-   neighbour classifier then "reaches" 85.3% and the forest 86.7%: inflated by 16-21 points. These
-   accuracies are close to those reported in [6]. Applied correctly, to the training patients only,
-   SMOTE does nothing useful here (the classes are already balanced) and both models fall to 64-71%.
-   The same mistake explained a published 99% accuracy on another cardiovascular dataset; once it was
-   corrected, accuracy fell to 77% [11].
-3. **Trying many random splits and reporting the best one.** This is the mildest mistake: the best
-   of 50 splits is 73.4%, against 72.8% for the median split. With 14,000 test patients the luck of
-   the split is worth less than one point. It matters far more in small datasets.
-
-None of this shows what the authors of [6] or [7] actually did; their papers would have to be
-reproduced to know. What it does show is that **an accuracy far above 74% on this dataset should be
-read as a sign of leakage until the pipeline proves otherwise**: the learning curve in Section 7.4
-gives no reason to expect a model to gain 15 or 20 points.
+@@LEAKAGE@@
 
 ### 9.3 Can the predicted risks be taken at face value?
 
@@ -1040,7 +1082,7 @@ from sklearn.metrics import brier_score_loss
 
 fig, ax = plt.subplots(figsize=(5.4, 5.0))
 ax.plot([0, 1], [0, 1], ls="--", lw=0.8, color=MUTED, label="perfect calibration")
-for name, colour in [(chosen, NO_CVD), ("Logistic regression", MUTED), ("Points score", CVD)]:
+for name, colour in [(chosen, NO_CVD), ("Logistic regression", MUTED), ("Points score (clinical)", CVD)]:
     observed, predicted = calibration_curve(y_test, test_scores[name], n_bins=10, strategy="quantile")
     brier = brier_score_loss(y_test, test_scores[name])
     ax.plot(predicted, observed, "-o", color=colour, lw=1.8, ms=4, label=f"{name} (Brier {brier:.4f})")
@@ -1051,37 +1093,37 @@ fig.savefig(FIGURES / "fig13_calibration.png")
 plt.show()
 ```
 
-**Gradient boosting's risks can be read as risks.** Its ten points lie on the diagonal: patients
-given about 20% have CVD about 20% of the time, and patients given 80% about 80% of the time. It also
-has the lowest Brier score (0.179). Logistic regression bends around the diagonal: it overstates low
-risks and understates the risk around 60-70%, the S-shaped error of a straight line forced through
-the switch-like effect of blood pressure (Section 8.4). The points score is close to calibrated, with
-a small excess of observed cases in the middle range.
+@@CALIBRATION@@
 
-### 9.4 Does the model work equally well for everyone?
+### 9.4 How does the model do for different patients?
 
 ```python
 subgroups = subgroup_table(test, test_scores[chosen])
+rng = np.random.default_rng(SEED)
+y_arr, risk_arr, male = y_test.to_numpy(), np.asarray(test_scores[chosen]), test["male"].to_numpy()
+sex_gaps = []
+for _ in range(1000):
+    i = rng.integers(0, len(y_arr), len(y_arr))
+    t, r, m = y_arr[i], risk_arr[i], male[i]
+    sex_gaps.append(roc_auc_score(t[m == 1], r[m == 1]) - roc_auc_score(t[m == 0], r[m == 0]))
+lo, hi = np.percentile(sex_gaps, [2.5, 97.5])
+print(f"AUC, men minus women: {subgroups.loc['men', 'AUC'] - subgroups.loc['women', 'AUC']:+.3f} "
+      f"(95% CI {lo:+.3f} to {hi:+.3f})")
 subgroups.style.format({"patients": "{:,}", "share with CVD": "{:.1%}", "mean predicted risk": "{:.1%}",
-                        "AUC": "{:.3f}", "sensitivity": "{:.1%}", "specificity": "{:.1%}"})
+                        "AUC": "{:.3f}", "systolic alone AUC": "{:.3f}", "sensitivity": "{:.1%}",
+                        "specificity": "{:.1%}"})
 ```
 
-- **Women and men are served equally.** Their AUCs (0.803 and 0.808) and error rates are close, and
-  in both groups the mean predicted risk matches the observed share within 1 point.
-- **Age is different.** Discrimination falls with age, from an AUC of 0.835 below 50 to 0.718 at 60
-  and over. Among older patients most have high blood pressure and most have CVD, so the main signal
-  separates them less well. The risks remain calibrated in every age group (mean predicted vs
-  observed within 1.5 points). But at the 0.5 cut-off the model flags 88% of diseased patients over 60
-  while clearing only 35% of the healthy ones; below 50 it is the reverse (59% and 91%). A single
-  cut-off does not suit every age. A deployed tool could use age-specific cut-offs, or report the risk
-  itself and leave the threshold to the clinician.
+@@SUBGROUPS@@
 
 ### 9.5 What the numbers mean outside this dataset
 
 Half the patients in this dataset have CVD. In the population that attends a routine check-up the
-share is much lower, and this changes what a positive prediction means. Sensitivity and
-specificity describe the model and carry over. The **positive predictive value**, the chance that a
-flagged patient really has CVD, depends on how common the disease is:
+share is much lower, and this changes what a positive prediction means. Sensitivity and specificity
+describe the model; they are assumed here to carry over to a population with a similar mix of
+patients, which is a simplification (a milder case mix would make sick patients harder to detect).
+The **positive predictive value**, the chance that a flagged patient really has CVD, depends on how
+common the disease is. These are point estimates:
 
 ```python
 m_acc = classification_metrics(y_test, test_scores[chosen], 0.5)
@@ -1094,34 +1136,27 @@ ppv.index.name = "share of patients with CVD"
 ppv.style.format("{:.0%}")
 ```
 
-In this dataset 76% of the patients the model flags really have CVD. In a check-up population where
-one patient in five has CVD, the same model, with the same sensitivity and specificity, would be right
-about only 44% of the patients it flags (36% at the screening cut-off). The model is still useful
-there, because it concentrates the disease: 44% is more than twice the 20% base rate. But its verdict
-has to be read as "worth a closer look", not as a diagnosis. And before its *risks* could be used in
-such a population, it would have to be recalibrated to that population's prevalence.
+@@PPV@@
 
 ## 10. Using the model
 
 The project's goal was a model that checks a patient for cardiovascular disease. The code below
 turns the chosen model into that check. It saves the model with its two cut-offs and the clinical
 scorecard to `outputs/model.joblib`. It also checks a new examination with the same plausibility
-rules as the data, so an impossible reading is rejected instead of scored, and then reports the risk,
-the verdict and the points.
+rules as the data, and only for ages the model was trained on (30 to 65), so an impossible or
+out-of-range input is rejected instead of scored. It then reports the risk, the verdict and the
+points.
 
 <!-- code: using the model -->
 
 ```python
-# the setting fixed in FINAL_PARAMS must be the one this report selected
-selected = {k: v for k, v in final.get_params().items() if k in FINAL_PARAMS}
-assert selected == FINAL_PARAMS, (selected, FINAL_PARAMS)
-
+print("selected setting:", {k: v for k, v in final.get_params().items() if k in FINAL_PARAMS})
 bundle = build_final(train, model=final)
 print("saved:", save_final(bundle).relative_to(ROOT))
 print(f"screening cut-off: {bundle['screening_cutoff']:.3f}")
 ```
 
-Two invented examination records show the output:
+Three invented examination records show the output:
 
 ```python
 examples = {
@@ -1140,57 +1175,24 @@ for label, values in examples.items():
 pd.DataFrame(rows).set_index("patient").style.format({"predicted risk": "{:.0%}", "risk from points": "{:.0%}"})
 ```
 
-The three invented patients get the answers a clinician would expect. The 62-year-old man with
-stage 2 hypertension, obesity and high cholesterol is at 87%. The young woman with normal results is
-at 14%. The 55-year-old woman in between is at 59%, so she is referred at either cut-off. The saved
-tool uses the four-factor clinical scorecard (Section 8.5), and it ranks the three patients in the
-same order as the model.
+@@EXAMPLES@@
 
 ```python
-try:
-    patient(age=50, sex="male", height=175, weight=80, systolic=1400, diastolic=90)
-except ValueError as e:
-    print("rejected:", e)
+for values in [dict(age=50, sex="male", height=175, weight=80, systolic=1400, diastolic=90),
+               dict(age=80, sex="female", height=160, weight=60, systolic=120, diastolic=80)]:
+    try:
+        patient(**values)
+    except ValueError as e:
+        print("rejected:", e)
 ```
 
-A new patient needs only the saved file: `assess(load_final(), patient(...))` gives the same
-answer in any later session.
+The saved file holds the model, the two cut-offs and the scorecard (the scorecard as plain
+numbers). With this notebook's code loaded, `assess(load_final(), patient(...))` gives the same
+answer in a later session, without retraining.
 
 ## 11. Conclusion
 
-**Objective met.** A gradient-boosting model detects cardiovascular disease from the eleven values of
-a routine examination. On 13,722 patients it never saw, it reaches an AUC of 0.804 (95% CI
-0.797-0.811) and 73.6% accuracy. Its risks are well calibrated, and it works equally well for women
-and men. Section 10 packages it as a check of a new examination that rejects impossible values
-and returns a risk, a verdict and a points breakdown.
-
-**Q1. What machine learning adds over what a doctor already has: something real, but small.**
-
-- **Over the guideline rule.** The model beats systolic pressure ≥ 130 mmHg by 2.3 points of
-  accuracy. At the rule's specificity, it detects 301 more of 6,785 diseased patients.
-- **Between the models.** The three flexible models are tied, and logistic regression is only 0.012
-  AUC behind.
-- **The scorecard.** A four-factor paper score comes within 0.011 AUC of the best model.
-- **Why the gain is small.** The learning curve is flat, so the ceiling of about 0.80 AUC (73-74%
-  accuracy) is set by what the examination records, not by the algorithm or the amount of data.
-- **The Framingham score.** As published, it ranks these patients worse than blood pressure alone,
-  and it only becomes competitive once refitted to them.
-
-**Q2. Data handling decides more than the algorithm does.**
-
-- **Cleaning.** Fewer than 2% of records hide the strongest predictor from any linear analysis, and
-  cost logistic regression 0.017 AUC. Tree models survive the dirty data, and repairing the records
-  is as good as dropping them.
-- **Leakage.** Common pipeline mistakes turn the same data into reported accuracies of 85-100%. Claims
-  far above 74% on this dataset should be treated as signs of leakage until shown otherwise.
-
-**Q3. The predictions can be trusted, within limits.**
-
-- **Calibration.** The risks are calibrated overall, for both sexes and in every age group.
-- **What drives them.** The explanations are dominated by blood pressure, age and cholesterol, in the
-  direction medicine expects.
-- **Weak spots.** Discrimination is weaker in patients over 60. The lifestyle answers carry
-  reverse-caused associations that must not be read as effects.
+@@CONCLUSION@@
 
 ### Limitations
 
@@ -1200,14 +1202,17 @@ and returns a risk, a verdict and a points breakdown.
    "cardiovascular disease" are undocumented. If the label includes diagnosed hypertension, part of
    blood pressure's predictive power is circular.
 3. **Treatment is not recorded.** Medication lowers blood pressure and cholesterol in diagnosed
-   patients, and diagnosis changes habits. Both weaken or reverse associations (Section 5.2), and
-   neither can be corrected for here.
+   patients, and diagnosis may change habits. Both can weaken or reverse associations (Section 5.2),
+   and neither can be corrected for here.
 4. **A 50/50 sample.** Predictive values and absolute risks apply to this sample. Another population
    needs recalibration (Section 9.5).
-5. **One dataset.** All results come from one source with one train/test split. The split is large
-   and every estimate carries a confidence interval, but there is no external validation.
-6. **Coarse measurements.** Cholesterol and glucose come in three categories, and diabetes had to be
-   approximated for the Framingham score.
+5. **Records with entry errors are mostly from sick patients.** The main test set leaves them out;
+   Section 9.1 reports how the model does on those that can be repaired.
+6. **One dataset, one split, one fit per model.** All results come from one source and one
+   train/test split, with no external validation. The confidence intervals cover the sampling of test
+   patients, not the randomness of training, and the search grids differ in size between models.
+7. **Coarse measurements.** Cholesterol and glucose come in three categories, almost all blood
+   pressures are rounded to 10 mmHg, and diabetes had to be approximated for the Framingham score.
 
 The next step for this model would be validation on data from a known clinical source, with
 recorded treatment and, ideally, outcomes followed over time. Those are what would turn a detector of
@@ -1215,7 +1220,7 @@ existing disease into a tool for prevention.
 
 ## References
 
-1. World Health Organization. *Cardiovascular diseases (CVDs)*, fact sheet.
+1. World Health Organization. *Cardiovascular diseases (CVDs)*, fact sheet, updated 31 July 2025.
 2. S. Ulianova. *Cardiovascular Disease dataset*. Kaggle, 2019.
 3. P. K. Whelton et al. 2017 ACC/AHA guideline for the prevention, detection, evaluation, and
    management of high blood pressure in adults. *Hypertension*, 71(6):e13-e115, 2018.
@@ -1224,17 +1229,18 @@ existing disease into a tool for prevention.
 5. R. S. Ramesh, R. T. S. Udupa, Monisha J and Kushi K. K. S. Cardiovascular disease prediction using
    machine learning: a comparative analysis. arXiv:2507.21898, 2025.
 6. D. Y. Omkari and K. Shaik. An integrated two-layered voting (TLV) framework for coronary artery
-   disease prediction using machine learning classifiers. *IEEE Access*, 2024.
-   doi:10.1109/ACCESS.2024.3389707.
-7. A. R. Zafar et al. Cardiovascular diagnostic detection using multilayer perceptron approach.
-   *Systems and Soft Computing*, 2026. doi:10.1016/j.sasc.2026.200490.
+   disease prediction using machine learning classifiers. *IEEE Access*, 12:56275-56290, 2024.
+   doi:10.1109/ACCESS.2024.3389707. A correction was published (*IEEE Access*, 12:162564, 2024,
+   doi:10.1109/ACCESS.2024.3490072); it could not be consulted here.
+7. R. B. Z. Auvee et al. Cardiovascular diagnostic detection using multilayer perceptron approach.
+   *Systems and Soft Computing*, 8:200490, 2026. doi:10.1016/j.sasc.2026.200490.
 8. A. G. Shaper, G. Wannamethee and M. Walker. Alcohol and mortality in British men: explaining the
    U-shaped curve. *The Lancet*, 2(8623):1267-1273, 1988.
 9. C. Rudin. Stop explaining black box machine learning models for high stakes decisions and use
    interpretable models instead. *Nature Machine Intelligence*, 1:206-215, 2019.
 10. N. V. Chawla, K. W. Bowyer, L. O. Hall and W. P. Kegelmeyer. SMOTE: synthetic minority
     over-sampling technique. *Journal of Artificial Intelligence Research*, 16:321-357, 2002.
-11. Eltawil et al. Comment on Iacobescu et al. "Evaluating binary classifiers for cardiovascular
+11. M. Eltawil et al. Comment on Iacobescu et al. "Evaluating binary classifiers for cardiovascular
     disease prediction: enhancing early diagnostic capabilities". *Journal of Cardiovascular
     Development and Disease*, 13(1):46, 2026. doi:10.3390/jcdd13010046.
 12. F. Pedregosa et al. Scikit-learn: machine learning in Python. *Journal of Machine Learning
