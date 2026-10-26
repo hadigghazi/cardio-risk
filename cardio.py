@@ -131,10 +131,11 @@ def repair_pressure(value: float, lo: float, hi: float) -> tuple[float, str | No
 def repair(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Blood pressures with a recognisable entry error, corrected; plus a log of every change.
 
-    One error per record pair: readings typed into each other's fields are swapped first, on the
-    values as recorded, and only when the swapped pair is plausible; a record that is swapped gets no
-    other rule. Each remaining reading may then be fixed by one rule of repair_pressure(). Nothing is
-    swapped after another rule has fired, so no record carries two stacked guesses.
+    At most one guess per reading: readings typed into each other's fields are swapped first, on the
+    values as recorded, and only when the swapped pair is plausible; a swapped pair gets no other
+    rule. Each remaining implausible reading may then be fixed by one rule of repair_pressure(), so
+    the two readings of a record can each get one fix (16/10 -> 160/100), but nothing is swapped after
+    another rule has fired and no reading carries two stacked guesses.
 
     Height and weight are not repaired: their errors show no pattern that identifies the true value.
     A value no rule can recover becomes NaN, so the record fails audit() and is dropped afterwards.
@@ -796,7 +797,7 @@ def leakage_experiments(train: pd.DataFrame, test: pd.DataFrame, correct_accurac
     #    patients, and with SMOTE done before the split
     everything = pd.concat([train, test])
     X, y = everything[FEATURES].to_numpy(float), everything[TARGET].to_numpy()
-    sx, sy = smote(X, y, n_new=len(everything), seed=seed)      # triples the data, as some papers do
+    sx, sy = smote(X, y, n_new=len(everything), seed=seed)      # n_new per class: the data triples
     Xa, ya = np.vstack([X, sx]), np.concatenate([y, sy])
     Xtr, Xte, ytr, yte = train_test_split(Xa, ya, test_size=TEST_SIZE, stratify=ya, random_state=seed)
     tx, ty = train[FEATURES].to_numpy(float), train[TARGET].to_numpy()
@@ -863,8 +864,8 @@ def ppv_at_prevalence(sensitivity: float, specificity: float, prevalence: float)
 # ------------------------------------------------------------------------------- using the model
 
 MODEL_FILE = OUTPUTS / "model.joblib"
-# The setting Section 7 selected for gradient boosting by cross-validation (the report checks that
-# its own search still agrees with this before saving the model)
+# The setting Section 7 selected for gradient boosting by cross-validation, for building the model
+# without repeating the search (Section 10 prints the setting the search selected, which should match)
 FINAL_PARAMS = {"learning_rate": 0.01, "max_leaf_nodes": 15, "min_samples_leaf": 50}
 SCREENING_SENSITIVITY = 0.80
 AGE_RANGE = (30, 65)   # years: the ages the model was trained on
