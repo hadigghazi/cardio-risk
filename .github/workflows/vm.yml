@@ -1,8 +1,8 @@
 name: VM
 
 # Runs the project's jobs on dblp-vm, the way the dblp project reaches it: SSH with the VM_HOST,
-# VM_USER and VM_SSH_KEY secrets. Started by hand (workflow_dispatch) or by CI after the tests pass
-# on a push to main (workflow_call, job=report).
+# VM_USER and VM_SSH_KEY secrets. Started by hand (workflow_dispatch); CI runs only the tests, and
+# the workflow_call trigger lets another workflow start a run if that is ever wanted.
 #
 #   run      copy this commit to the VM, build the image there and start `job` in a detached,
 #            memory- and CPU-capped container named cardio-<this run's id>; follow it for up to

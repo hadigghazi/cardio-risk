@@ -10,7 +10,7 @@ names start with "!!" are matched by Morph across slides (the model bars of slid
 leakage bars of slide 11).
 
 Numbers come from the executed report (report.ipynb). The scorecard, its risk mapping and the
-command-line example are read from the saved model (outputs/model.joblib), so they cannot drift.
+patient example are read from the saved model (outputs/model.joblib), so they cannot drift.
 Speaker notes hold the spoken script; the build prints its length at 140 words a minute.
 """
 import copy
@@ -284,10 +284,6 @@ def logo_plate():
 
 
 # ------------------------------------------------------------------ numbers from the saved model
-# The report saves the model from inside the notebook, where PointsScore is defined in the notebook's
-# own namespace (__main__); unpickling it here needs that name to point at the same class in cardio.py.
-import __main__  # noqa: E402
-__main__.PointsScore = cardio.PointsScore
 BUNDLE = cardio.load_final(ROOT / "outputs" / "model.joblib")
 CARD = BUNDLE["points"].table()
 if list(BUNDLE["points"].factors) != cardio.CLINICAL_FACTORS:
@@ -318,7 +314,7 @@ text(s, 2.0, 3.85, 6.0, 0.8, [
     [("Hadi Ghazi", {"font": HEAD, "bold": True, "size": 17})],
     [("Lebanese University", {"size": 12.5, "color": DKRED, "bold": True})],
 ], align=PP_ALIGN.CENTER, space=3, name="!!byline")
-notes(s, "Good morning. My project is topic two, patient's sickness prediction. The question is simple: from "
+notes(s, "Good morning. My project is patient's sickness prediction. The question is simple: from "
          "the values a doctor records at a routine check-up, can a model tell whether a patient has "
          "cardiovascular disease? And just as important: how good is it really, compared with what doctors "
          "already use?")
@@ -328,8 +324,8 @@ s = new("TITLE_ONLY"); S.append(s)
 title(s, "Why this matters")
 box(s, 0.79, 1.35, 3.25, 3.75, fill=SOFT)
 circle_icon(s, "heart", 1.04, 1.6, d=0.7, fill=RED)
-text(s, 1.04, 2.5, 2.8, 0.6, "17.9 million", size=30, font=HEAD, bold=True, color=DKRED)
-text(s, 1.04, 3.12, 2.8, 0.9, "deaths a year from cardiovascular disease, the world's leading cause of death (WHO)",
+text(s, 1.04, 2.5, 2.8, 0.6, "19.8 million", size=30, font=HEAD, bold=True, color=DKRED)
+text(s, 1.04, 3.12, 2.8, 0.9, "deaths from cardiovascular disease in 2022, about a third of all deaths (WHO)",
      size=12.5)
 text(s, 1.04, 4.12, 2.8, 0.8, "Many could be delayed if patients at risk were found early, at an ordinary check-up.",
      size=12, color=MUTED)
@@ -344,7 +340,7 @@ for i, (ic, h, b) in enumerate(qs):
     circle_icon(s, ic, 4.45, y, d=0.58, name="!!q%d" % i)
     text(s, 5.2, y - 0.02, 4.0, 0.3, h, size=13.5, font=HEAD, bold=True)
     text(s, 5.2, y + 0.29, 4.0, 0.3, b, size=11.5, color=MUTED)
-notes(s, "Cardiovascular diseases are the world's leading cause of death: about 17.9 million people a year. Many "
+notes(s, "Cardiovascular diseases are the world's leading cause of death: about 19.8 million people in 2022. Many "
          "of those deaths can be delayed if patients at risk are found early. So the objective is a model that "
          "uses one examination's values to detect the disease. Three questions guide the evaluation. First, what "
          "does machine learning add over what a doctor already has: a blood-pressure threshold and a standard "
@@ -423,8 +419,8 @@ text(s, 0.79, 4.45, 4.8, 0.6, "Men only: women hardly smoke in this data (1.8% v
 box(s, 5.95, 1.3, 3.27, 3.8, fill=SOFT)
 circle_icon(s, "hospital", 6.2, 1.5, d=0.6, fill=RED)
 text(s, 6.95, 1.6, 2.15, 0.45, "The sick quitter", size=15, font=HEAD, bold=True, anchor=MSO_ANCHOR.MIDDLE)
-text(s, 6.2, 2.28, 2.85, 1.2, "Diagnosis and answers come from the same visit. Patients already diagnosed have "
-     "usually been told to quit, so they answer \"no\".", size=12)
+text(s, 6.2, 2.28, 2.85, 1.2, "A likely reason: diagnosis and answers come from the same visit, and patients "
+     "already diagnosed may have quit, so they answer \"no\".", size=12)
 for i, t in enumerate(["Detection, not prediction", "Associations, not causes"]):
     c = box(s, 6.2, 3.65 + i * 0.6, 2.8, 0.45, fill=NAVY, radius=0.3)
     label_in(c, t, size=12, font=HEAD)
@@ -555,12 +551,12 @@ notes(s, "Since the gains are small, I also built something a doctor can use wit
 
 # 11 --------------------------------------------------------------- leakage (morph target)
 s = new("TITLE_ONLY"); S.append(s)
-title(s, "How 90% accuracy happens")
+title(s, "How 90% accuracy can happen")
 bars(s, [("a", "Honest: unseen patients", 73.6, "  gradient boosting", NAVY),
          ("b", "Luckiest of 50 random splits", 73.4, "", GREY),
          ("c", "SMOTE before the split", 86.7, "", RED),
          ("d", "Scored on its own training data", 99.9, "", RED)], top=1.45, step=0.62, inside_above=80)
-for v, lab, side in [(88.09, "88% (Omkari 2024)", "left"), (94.5, "94.5% (Zafar 2026)", "right")]:
+for v, lab, side in [(88.09, "88% (Omkari 2024)", "left"), (94.5, "94.5% (Auvee 2026)", "right")]:
     box(s, ax(v) - 0.07, 4.14, 0.14, 0.14, fill=DKRED, shape=MSO_SHAPE.ISOSCELES_TRIANGLE)
     if side == "left":
         text(s, ax(v) - 1.65, 4.33, 1.6, 0.25, lab, size=10, bold=True, color=DKRED, align=PP_ALIGN.RIGHT)

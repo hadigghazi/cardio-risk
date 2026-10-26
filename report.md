@@ -429,10 +429,10 @@ by_age.style.format("{:.1%}", subset="mean").format("{:,}", subset="size")
 
 For smoking the paradox survives. Among men (women hardly smoke here), smokers have the same or a
 lower disease rate than non-smokers in every age group. The gap is small and uncertain in the
-youngest and oldest groups, but compared age for age, smokers have @@SMOKE_GAP@@ points less CVD, and
+youngest and oldest groups, but compared age for age, smokers have 3.1 points less CVD (95% CI 1.5 to 4.9 points less) points less CVD, and
 the confidence interval excludes zero. For alcohol it does not survive: the age-standardised gap is
-@@ALCO_GAP@@ points and its interval includes zero. Smokers also drink far more than non-smokers
-(@@SMOKERS_DRINK@@), which this simple comparison does not separate.
+−2.0 (95% CI −4.3 to +0.3) points and its interval includes zero. Smokers also drink far more than non-smokers
+(31% against 5%), which this simple comparison does not separate.
 
 A plausible explanation lies in how the data was collected rather than in biology, though the data
 cannot test it: it has no "former smoker" answer. The diagnosis and the answers were recorded **at
@@ -578,11 +578,11 @@ Some notes on the baselines:
   applied to the fifth. Their AUC needs no cut-off.
 
 **Selection rule, fixed in advance.** The final model is the *simplest* machine-learning model whose
-mean cross-validated AUC is within one standard error of the best one. The order of simplicity
-follows model size: the Framingham form and logistic regression (a few coefficients), then gradient
-boosting (an ensemble of small trees, at most 31 leaves each), then random forest (200 deep trees),
-then the neural network. A difference smaller than the fold-to-fold noise is not evidence, so it
-should not buy complexity.
+mean cross-validated AUC is within one standard error of the best one. The order of simplicity: the
+Framingham form and logistic regression first (a few coefficients that can be read directly), then
+the tree ensembles from smaller to larger (gradient boosting builds small trees, at most 31 leaves
+each; random forest grows 200 deep ones), and the neural network last, the hardest to inspect. A
+difference smaller than the fold-to-fold noise is not evidence, so it should not buy complexity.
 
 ### 7.2 Cross-validated comparison
 
@@ -623,8 +623,13 @@ plt.show()
 
 **Every machine-learning model beats every clinical baseline, but the margins are small.**
 
-- **Best model.** @@CV_BEST@@
-- **The flexible models are close.** @@CV_FLEXIBLE@@
+- **Best model.** Gradient boosting reaches a cross-validated AUC of 0.800 and an accuracy of
+  73.5%. The guideline rule (systolic ≥ 130 mmHg) is right for 71.3% of patients. Out of every 1,000
+  patients, the best model classifies about 22 more correctly than one blood-pressure reading.
+- **The flexible models are close.** Gradient boosting (0.8005), the neural network (0.7996) and random forest (0.7992)
+  lie within 0.0013 AUC of each other, less than the fold-to-fold standard deviation (about 0.003).
+  Logistic regression is 0.010 behind, so the curves and interactions that trees and networks can
+  represent are worth a little, but only a little.
 - **The guideline's threshold is also the most accurate cut-off.** When systolic pressure alone is
   given the cut-off that classifies the training folds most accurately, the search lands on 130 mmHg,
   the guideline's own value, in every fold: the accuracy, sensitivity and specificity are identical to
@@ -632,8 +637,8 @@ plt.show()
   values; this is a consistency check, not a discovery.) The AUC differs only because the rule turns
   the reading into a yes/no answer.
 - **The published Framingham score ranks these patients worse than systolic pressure alone**
-  (AUC @@CV_FRAM@@ vs @@CV_SBP@@). Refitting the same five terms on these patients raises it to
-  @@CV_FRAM_REFIT@@: the terms are informative, but the published weights do not transfer to this
+  (AUC 0.696 vs 0.751). Refitting the same five terms on these patients raises it to
+  0.780: the terms are informative, but the published weights do not transfer to this
   population and question (existing disease here, a first event within ten years in Framingham).
   Section 8.1 shows where they go wrong.
 
@@ -652,7 +657,12 @@ for name, s in searches.items():
  .style.format("{:.4f}", subset=["best", "second best", "median setting", "worst"], na_rep="-"))
 ```
 
-@@CV_FLATNESS@@
+The searches are flat where it matters. All 27 gradient-boosting settings land between 0.7995 and
+0.8005, and its two best settings are tied. Its best learning rate is the smallest tried (0.01), but
+early stopping ended that model after 593 of the 1,000 trees allowed, so a smaller rate would mostly
+have needed more trees. The best random-forest and neural-network settings sit inside their grids,
+which were widened after a first run found the best settings at their edges. A wider search is
+therefore unlikely to change the comparison.
 
 The cross-validated score of each model's *best* setting is slightly optimistic, because that
 setting was chosen on the same folds. With these grids and 55,000 patients the bias is small, but it
@@ -670,7 +680,8 @@ features_effect["gain"] = features_effect["recorded + derived"] - features_effec
 features_effect.style.format("{:.4f}")
 ```
 
-@@DERIVED@@ Both models can build what they need from the recorded values on their own, which is a
+The derived features change the AUC by less than 0.001 in either direction (+0.0003 for gradient
+boosting, −0.0005 for logistic regression), well inside the noise. Both models can build what they need from the recorded values on their own, which is a
 common finding with tabular data this simple. The derived features stay in the final model anyway:
 they cost nothing in accuracy, and they make the explanations in Section 8 easier to read. A clinician
 thinks in BMI and blood-pressure stages, not in height and weight.
@@ -697,7 +708,19 @@ plt.show()
 curve.pivot(index="patients", columns="model", values="auc").style.format("{:.4f}")
 ```
 
-@@LEARNING@@
+The two curves tell different stories:
+
+- **Logistic regression levels off early.** Its validation AUC gains only 0.003 between 2,000 and
+  44,000 patients.
+- **Gradient boosting keeps improving, but slowly.** It needs more patients to estimate its curves and
+  interactions, overtakes logistic regression at around 2,000 patients, and keeps improving. But the
+  last doubling, from 22,000 to 44,000 patients, adds only 0.0015.
+
+More patients of the same kind would therefore add little. Together with the closeness of very
+different algorithms (Section 7.2) and the flatness of their searches, this suggests that the limit
+near 0.80 AUC (about 73% accuracy) lies mainly in what the eleven recorded values can tell, not in
+the amount of data or the choice of algorithm. It is a reasoned reading, not a proof: other models
+or other features could still do somewhat better.
 
 ### 7.5 The chosen model
 
@@ -714,7 +737,12 @@ print(f"model size: gradient boosting {gb.n_iter_} trees of at most {gb.max_leaf
       f"random forest {len(rf.estimators_)} trees with {sum(t.tree_.n_leaves for t in rf.estimators_):,} leaves in all")
 ```
 
-@@CHOICE@@
+Three models are within one standard error (0.0013) of the best: gradient boosting, the neural
+network and random forest. The rule fixed in advance then takes the simplest of the tied models, and
+in its order gradient boosting comes first: it is far smaller than the forest (593 trees of at most
+15 leaves, under 9,000 leaves in all, against 114,770), and far easier to inspect than the network.
+**Gradient boosting is the final model.** The choice matters little in practice: Section 8.2 shows
+how close the three remain on the test set.
 
 ## 8. The final model on the test set
 
@@ -770,7 +798,11 @@ test_table.style.format({"test AUC": "{:.3f}", "CV AUC": "{:.3f}", "accuracy": "
                          "sensitivity": "{:.1%}", "specificity": "{:.1%}"})
 ```
 
-@@TEST_RESULTS@@
+**The test set confirms the cross-validation.** Every candidate's test AUC is within 0.004 of its
+cross-validated AUC. On patients it has never seen, gradient boosting reaches an AUC of 0.804 (95% CI
+0.797-0.811) and 73.6% accuracy (72.9-74.4%), against 71.3% for the systolic ≥ 130 rule: a gain of
+2.3 points (95% CI 1.8 to 2.9). The test set re-orders the two runners-up (random forest 0.803, the
+neural network 0.800), a reminder that their cross-validated differences were within the noise.
 
 Why does the published Framingham score rank these patients so poorly? Its weights can be checked
 one at a time:
@@ -789,7 +821,14 @@ print("published Framingham AUC with the smoking term switched off:",
                 "systolic alone AUC": "{:.3f}"}))
 ```
 
-@@FRAMINGHAM@@
+Two of the published weights go wrong for these patients. **Sex:** the equations give men about
+twice the risk of women (a mean of 15.9% against 7.0%), but CVD is equally common in both sexes here
+(49.9% and 49.2%). Within women, the published score ranks patients about as well as systolic
+pressure alone (AUC 0.752 against 0.756); within men it does worse (0.695 against 0.752).
+**Smoking:** the score adds risk for smokers, while smokers in this data have slightly less CVD
+(Section 5.2); switching the smoking term off raises the overall AUC from 0.693 to 0.709. The
+published equations were built for a different population and a different question, and their
+weights must be re-estimated before they are used on data like this.
 
 ```python
 from sklearn.metrics import roc_curve
@@ -837,7 +876,12 @@ print(f"healthy test patients flagged, model minus rule: {extra:+,} (95% CI {flo
       f"of {int((y == 0).sum()):,}")
 ```
 
-@@RULE_POINT@@
+At an operating point chosen without the test set, the model detects 65.8% of the diseased test
+patients where the rule detects 61.8%, at a slightly higher specificity (81.0% against 80.6%). That
+is 274 more of the 6,785 diseased test patients (95% CI 220 to 332), with 29 fewer healthy patients
+flagged (95% CI 76 fewer to 19 more: no clear difference). This is the most concrete form of the
+answer to Q1: about one more sick patient found for every 25 diseased patients examined, at no clear
+cost in false alarms.
 
 ### 8.2 How large are the differences?
 
@@ -859,7 +903,14 @@ for a, b in pairs:
 pd.DataFrame(diffs).set_index("comparison").style.format({"AUC difference": "{:+.4f}"})
 ```
 
-@@DIFFERENCES@@
+- **Over random forest and the neural network**, the lead is small: 0.0015 and 0.0040 AUC. The
+  random-forest interval excludes zero at 95% but not once the five comparisons are adjusted for; the
+  lead over the network survives the adjustment but is still only 0.004. None of these differences
+  would change a clinical decision.
+- **Over logistic regression** the lead is 0.012 (95% CI 0.009 to 0.014). Small, but consistent: the
+  trees capture something a linear model on these features does not (Section 8.4 suggests what).
+- **Over Framingham's terms refitted** (0.024) and **over systolic pressure alone** (0.050), the gaps
+  are clear.
 
 ### 8.3 Choosing the threshold
 
@@ -896,7 +947,12 @@ plt.show()
 pd.DataFrame(summary).set_index("cut-off").drop(columns="auc").style.format("{:.1%}")
 ```
 
-@@THRESHOLDS@@
+The screening cut-off, chosen on the training patients alone, detects 80.1% of the diseased test
+patients: the target carries over to unseen patients. The price is specificity. At 0.50 the model
+misses 2,112 of the 6,785 diseased test patients and flags 1,510 of the 6,937 healthy ones. At the
+screening cut-off it misses 1,347 and flags 2,476. Which trade-off is right is not a statistical
+question. It depends on what follows a positive result. For a cheap follow-up examination, the
+screening cut-off is the sensible choice.
 
 ### 8.4 What drives the predictions
 
@@ -929,7 +985,13 @@ retrained = drop_group_importance(final, train)
 retrained.style.format("{:.4f}")
 ```
 
-@@IMPORTANCE@@
+**Blood pressure dominates.** Scrambling the five blood-pressure features costs this model 0.210 test
+AUC; age (0.036) and cholesterol (0.030) follow, body size adds a little (0.007), and glucose, the
+three lifestyle answers and sex together contribute almost nothing. Retraining tells the same story
+in different numbers. A model built without blood pressure still reaches a cross-validated AUC of
+0.702: the other factors carry real information, they are simply weaker. Leaving out age costs
+0.020, cholesterol 0.009, and every other factor about 0.002 or less. The two views agree on the
+order, which matches the exploratory analysis in Section 5.
 
 ```python
 curves = [("ap_hi", range(100, 181, 10), "systolic pressure (mmHg)"),
@@ -957,7 +1019,25 @@ fig.savefig(FIGURES / "fig11_partial_dependence.png")
 plt.show()
 ```
 
-@@PARTIAL_DEPENDENCE@@
+The partial-dependence curves show the *shape* of each effect:
+
+- **Systolic pressure works more like a switch than a slope.** The average predicted risk is about
+  31-39% from 100 to 120 mmHg, rises to 54% at 130 mmHg and 80% at 140 mmHg, then levels off at about
+  84%. Two things make the steps sharper than the biology need be: the stage feature builds the
+  guideline's thresholds into the data (Section 6), and almost every reading is a multiple of 10.
+  Still, the shape is clearly not a straight line, and a logistic regression, which adds each
+  feature's effect along a straight line in log-odds, can only approximate it. This may explain part
+  of its 0.012 AUC gap. (At 100-110 mmHg the curve also lowers some diastolic readings, so that end is
+  not a pure systolic effect.)
+- **Age, weight and cholesterol raise the risk steadily.** Age goes from about 38% at 40 to 65% at 64,
+  weight from about 41% at 50 kg to 58% at 120 kg, and cholesterol "well above normal" adds about 25
+  percentage points.
+- **Glucose, smoking and alcohol are flat or slightly *protective*,** and physical activity slightly
+  lowers the risk. For smoking this is the pattern of Section 5.2. For glucose it probably reflects
+  its correlation with cholesterol (0.45): its rate rises on its own (Section 5.1), but once
+  cholesterol is known the model gives it no extra weight. **These curves describe associations in
+  this dataset and must not be read as causal effects**: nothing here suggests that smoking is
+  harmless.
 
 ### 8.5 A points score a doctor can use on paper
 
@@ -975,7 +1055,18 @@ card = points.table()
 card.set_index(["factor", "band"])
 ```
 
-@@FULL_CARD@@
+The scorecard reads like the model: systolic pressure earns up to 27 points, age up to 11,
+cholesterol up to 11, and BMI up to 4. Three factors earn *negative* points: smoking (−2), alcohol
+(−2) and glucose "well above normal" (−3). No clinician could hand out a score that rewards smoking
+or high glucose. For smoking this is probably the reverse causation of Section 5.2; for glucose, its
+overlap with cholesterol (Section 8.4). Physical activity earns −2, the protective direction medicine
+expects.
+
+So a **clinical version** is built by a rule stated here: keep the factors that are *measured* at the
+examination and whose points in this training fit go the way medicine expects. That removes the three
+self-reported answers, whatever their sign (they are the answers most open to reverse causation), and
+glucose, and keeps age, systolic pressure, BMI and cholesterol. The rule was set after seeing the full
+card's points, which come from the training patients only; the test set played no part in it.
 
 ```python
 clinical = PointsScore(factors=CLINICAL_FACTORS).fit(train, train["cardio"])
@@ -1009,7 +1100,16 @@ fig.savefig(FIGURES / "fig12_points_score.png")
 plt.show()
 ```
 
-@@CLINICAL_CARD@@
+**Dropping the self-reported answers and glucose costs almost nothing.** The four-factor clinical
+card reaches an AUC of 0.793 (95% CI 0.785-0.800) and 72.4% accuracy: the same AUC as logistic
+regression on all fifteen features, with 0.2 points less accuracy, and 0.012 AUC below gradient
+boosting (95% CI 0.009 to 0.014). The full card does a little better (0.795, 73.0%), as it should
+with more factors. The card's risks come straight from the training patients' observed rates at each
+total, so they follow the test patients' rates closely in the figure (Section 9.3 checks them
+formally). A doctor with a pen can add up four numbers (age, systolic pressure, BMI, cholesterol) and
+get within about one point of the best model's accuracy. This is in line with Rudin's argument that
+for tabular problems like this one, an interpretable model is often nearly as accurate as a black box
+[9].
 
 ## 9. Reliability
 
@@ -1036,7 +1136,20 @@ strategies.set_index(["model", "strategy"]).style.format(
     {"training patients": "{:,}", "test AUC": "{:.4f}", "test accuracy": "{:.1%}", "AUC change vs drop": "{:+.4f}"})
 ```
 
-@@STRATEGIES@@
+The answer depends on the model, as Section 4.3 predicted:
+
+- **Gradient boosting barely notices.** Trained on the raw data it loses 0.0008 AUC (95% CI 0.0001 to
+  0.0014): detectable with 13,722 patients, but negligible. Trees split on the order of values, so a
+  pressure of 16,020 mmHg simply lands in the top branch with every other high reading.
+- **Logistic regression is hurt by the raw data.** Its AUC falls by 0.017 (95% CI 0.014 to 0.019),
+  from 0.793 to 0.776. A handful of absurd values pull its straight-line coefficient for blood
+  pressure towards zero.
+- **Repairing and dropping give the same result** for both models (differences under 0.001). The
+  repaired records are under 2% of the data, too few to change what a model learns. Repair keeps more
+  patients, but its value lies in not discarding real people rather than in accuracy.
+
+The practical lesson: cleaning is essential for linear models and for any analysis that reads
+coefficients or correlations (Section 4.3), even when a tree model would have survived without it.
 
 The common test set leaves out the test patients whose records fail a check. The protocol promised
 to report how the final model does on them:
@@ -1047,7 +1160,14 @@ excluded.style.format({"patients": "{:,}", "share with CVD": "{:.1%}", "AUC": "{
                       na_rep="-")
 ```
 
-@@EXCLUDED@@
+The 274 test patients that `drop` removes are very different from the rest: 77% of them have CVD,
+against 49% of the valid test patients. The `repair` rules recover 257 of them (78% CVD). Scored on
+those repaired records, the final model, trained on valid records only, reaches an AUC of 0.707 (on
+only 257 patients, an imprecise figure) and 82.5% accuracy; the accuracy is high mostly because most
+of these patients are sick and the model flags most of them. Added to the main test set, they move
+the headline slightly up (AUC 0.806, accuracy 73.8%), so the results of Section 8 are, if anything, a
+little conservative. Within these records, though, the model separates sick from healthy less well
+than in the main test set.
 
 ### 9.2 How mistakes inflate reported accuracy
 
@@ -1067,7 +1187,30 @@ print(f"leakage experiments: {time.time() - t0:.0f} s")
 leakage.style.format({"reported accuracy": "{:.1%}"}).hide(axis="index")
 ```
 
-@@LEAKAGE@@
+The same data can "report" anything from 64% to 99.9% accuracy, depending on how the evaluation is
+set up:
+
+1. **Accuracy measured on the training patients.** A forest of fully grown trees memorises its
+   training patients and scores 99.9% on them, against 71.0% on patients it has never seen. Any
+   figure that does not come from held-out patients says nothing about the model.
+2. **SMOTE before the split** [10]. Synthetic patients are interpolated between real neighbours, so
+   after a random split most test patients have a near-twin in the training set. A one-nearest-
+   neighbour classifier then "reaches" 85.3% and the forest 86.7%. On unseen patients the same models
+   score 64.4% and 71.0% without oversampling, and 64.0% and 70.5% with SMOTE done correctly (on the
+   training patients only): oversampling brings nothing here, since the classes are already
+   balanced, and the 15-21-point "gain" comes entirely from the leak. A published comment traced a
+   reported 99% accuracy on another cardiovascular dataset (BRFSS 2021) largely to SMOTE-ENN applied
+   before the split, together with a 2-nearest-neighbour model; with resampling on the training data
+   only, that model reached 77% [11].
+3. **Trying many random splits and reporting the best one.** This is the mildest mistake: the best
+   of 50 splits is 73.4%, against 72.8% for the median split. With 14,000 test patients the luck of
+   the split is worth less than one point. It matters far more in small datasets.
+
+None of this shows what the authors of [6] or [7] actually did; their papers would have to be
+reproduced to know. What it does show is that two common mistakes can turn 73% into 85-100% on this
+very dataset, while the learning curve (Section 7.4) gives no reason to expect an honest model to gain
+15 or 20 points. An accuracy far above 74% on this dataset is a reason to check the evaluation before
+believing it.
 
 ### 9.3 Can the predicted risks be taken at face value?
 
@@ -1093,7 +1236,14 @@ fig.savefig(FIGURES / "fig13_calibration.png")
 plt.show()
 ```
 
-@@CALIBRATION@@
+**Gradient boosting's risks can be read as risks, in this sample.** Its ten points lie close to the
+diagonal: patients given about 20% have CVD about 20% of the time, and patients given 80% about 80% of
+the time. It also has the lowest Brier score (0.179). Logistic regression bends around the diagonal:
+it overstates the lower risks and understates those around 60-70%, the error of a straight line
+forced through a curved relationship (Section 8.4). The clinical card's risks, read from the training
+patients' rates at each total, are close to calibrated too (Brier 0.184), with a small excess of
+observed cases around 35-45%. All of these risks hold for a population in which half the patients are
+sick (Section 9.5).
 
 ### 9.4 How does the model do for different patients?
 
@@ -1114,7 +1264,22 @@ subgroups.style.format({"patients": "{:,}", "share with CVD": "{:.1%}", "mean pr
                         "specificity": "{:.1%}"})
 ```
 
-@@SUBGROUPS@@
+- **Women and men are served similarly.** Their AUCs are 0.803 and 0.808; the difference (+0.005, 95%
+  CI −0.011 to +0.020) is within the noise, and in both groups the mean predicted risk is within 1
+  point of the observed share.
+- **Discrimination is lower in older groups, for every method.** The model's AUC falls from 0.835
+  under 50 to 0.768 at 50-59 and 0.718 at 60 and over, and systolic pressure alone falls the same way
+  (0.796, 0.730, 0.681). So this reflects the information more than the model: blood pressure
+  separates sick from healthy less well among older patients. AUCs of these groups are also not like
+  for like: the groups differ in prevalence (37%, 51%, 68%), and within a narrow age band age itself
+  no longer separates anyone, which lowers any model's AUC there.
+- **The risks hold in every group on average.** The mean predicted risk is within 1.5 points of the
+  observed share in each group (calibration-in-the-large; the full calibration curve of Section 9.3
+  covers all patients). Because most patients over 60 are sick (68%), a calibrated model flags most of
+  them at the 0.5 cut-off (88% sensitivity, 35% specificity), while under 50 it is the reverse (59%
+  and 91%). That is the same cut-off applied to different risks, not a different rule for different
+  ages; whether older patients should be referred at a different risk is a clinical question about
+  costs, not a statistical one.
 
 ### 9.5 What the numbers mean outside this dataset
 
@@ -1136,7 +1301,12 @@ ppv.index.name = "share of patients with CVD"
 ppv.style.format("{:.0%}")
 ```
 
-@@PPV@@
+In this dataset 76% of the patients the model flags really have CVD. In a check-up population where
+one patient in five has CVD, the same model, with the same sensitivity and specificity, would be right
+about only 44% of the patients it flags (36% at the screening cut-off). The model is still useful
+there, because it concentrates the disease: 44% is more than twice the 20% base rate. But its verdict
+has to be read as "worth a closer look", not as a diagnosis. And before its *risks* could be used in
+such a population, it would have to be recalibrated to that population's prevalence.
 
 ## 10. Using the model
 
@@ -1175,7 +1345,11 @@ for label, values in examples.items():
 pd.DataFrame(rows).set_index("patient").style.format({"predicted risk": "{:.0%}", "risk from points": "{:.0%}"})
 ```
 
-@@EXAMPLES@@
+The three invented patients get the answers a clinician would expect. The 62-year-old man with
+stage 2 hypertension, obesity and high cholesterol is at 87% (the clinical card gives him 50 points,
+85%). The young woman with normal results is at 14% (0 points, 8%). The 55-year-old woman in between
+is at 59% (26 points, 68%), so she is referred at either cut-off. The card and the model rank the
+three patients in the same order.
 
 ```python
 for values in [dict(age=50, sex="male", height=175, weight=80, systolic=1400, diastolic=90),
@@ -1192,7 +1366,48 @@ answer in a later session, without retraining.
 
 ## 11. Conclusion
 
-@@CONCLUSION@@
+**Objective met.** A gradient-boosting model detects cardiovascular disease from the eleven values of
+a routine examination. On 13,722 patients it never saw, it reaches an AUC of 0.804 (95% CI
+0.797-0.811) and 73.6% accuracy (72.9-74.4%). Its risks are well calibrated in this sample, and it
+performs similarly for women and men. Section 10 packages it as a check of a new examination that
+rejects impossible values and returns a risk, a verdict and a points breakdown.
+
+**Q1. What machine learning adds over what a doctor already has: something real, but small.**
+
+- **Over the guideline rule.** The model beats systolic pressure ≥ 130 mmHg by 2.3 points of accuracy
+  (95% CI 1.8 to 2.9). At an operating point matched to the rule's specificity on training data, it
+  detects 274 more of the 6,785 diseased test patients (95% CI 220 to 332), with no clear difference
+  in false alarms.
+- **Between the models.** Gradient boosting, random forest and the neural network are within the
+  cross-validation noise of each other and within 0.004 AUC on the test set; logistic regression is
+  0.012 AUC behind.
+- **The scorecard.** A four-factor paper score comes within 0.012 AUC and about one point of accuracy
+  of the best model.
+- **Why the gain is small.** The learning curves level off, very different algorithms end up close
+  together, and the searches are flat: the limit near 0.80 AUC (about 73% accuracy) seems to lie
+  mainly in what the examination records, rather than in the algorithm or the amount of data.
+- **The Framingham score.** As published, it ranks these patients worse than blood pressure alone,
+  mostly because of its sex and smoking weights; refitted to these patients, its terms become
+  competitive.
+
+**Q2. Data handling can change the reported performance far more than the choice of algorithm.**
+
+- **Cleaning.** Fewer than 2% of records hide the strongest predictor from any linear analysis, and
+  cost logistic regression 0.017 AUC. Tree models barely notice the dirty data, and repairing the
+  records is as good as dropping them. The removed records are mostly from sick patients; adding back
+  the repairable ones changes the headline very little.
+- **Leakage.** Two common evaluation mistakes turn the same data into reported accuracies of 85-100%.
+  Claims far above 74% on this dataset call for a close look at how they were evaluated.
+
+**Q3. The predictions can be trusted, within limits.**
+
+- **Calibration.** The risks are calibrated in this sample, and on average within every sex and age
+  group.
+- **What drives them.** Blood pressure, age and cholesterol dominate, in the direction medicine
+  expects.
+- **Limits.** Discrimination is lower among older patients, for every method including the guideline
+  rule. The lifestyle answers carry associations, probably reverse-caused for smoking, that must not
+  be read as effects.
 
 ### Limitations
 

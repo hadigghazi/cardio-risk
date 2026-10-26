@@ -297,9 +297,9 @@ def framingham_design(df: pd.DataFrame) -> np.ndarray:
 N_JOBS = int(os.environ.get("CARDIO_JOBS", "4"))
 CV_FOLDS = 5
 # Simplest first: when several models are statistically tied, the earliest in this order is chosen.
-# Fixed before any result, by model size: a few coefficients (the two linear models), then an ensemble of
-# small trees (gradient boosting: at most 15 leaves each), then a forest of 200 deep trees (thousands of
-# leaves each), then a neural network.
+# Fixed before any result: the two linear models (a few coefficients that can be read directly), then
+# the tree ensembles from smaller to larger (gradient boosting builds small trees, at most 31 leaves
+# each; random forest grows 200 deep ones), then the neural network, the hardest to inspect.
 SIMPLICITY = ["Framingham form (refit)", "Logistic regression", "Gradient boosting", "Random forest",
               "Neural network (MLP)"]
 

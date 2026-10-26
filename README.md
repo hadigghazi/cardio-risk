@@ -1,15 +1,15 @@
 # Predicting cardiovascular disease from a routine examination
 
 Course project, topic 2 (Patient's Sickness Prediction): `data/cardio.csv`, 70,000 patients.
-The brief is in `brief/`. Deliverables: the report notebook, the Python file and a presentation.
+The brief is in `brief/`. Deliverables: the report notebook (with all the code inside it) and a presentation.
 
 | File | What it is |
 |---|---|
 | `cardio.py` | single source of all project code; `build_report.py` copies its sections into the notebook; also a CLI |
 | `report.md` | source of the report; `build_report.py` turns it into `outputs/report.ipynb` and executes it |
-| `tests/` | unit tests for the cleaning rules and features |
+| `tests/` | unit tests: cleaning and repair rules, features, Framingham, metrics and cut-offs, scorecard, patient checks, notebook build |
 | `.github/workflows/ci.yml` | every push: tests on GitHub's runner (the report runs on demand, see below) |
-| `.github/workflows/vm.yml` | runs jobs on dblp-vm over SSH (secrets VM_HOST, VM_USER, VM_SSH_KEY, as in the dblp project), in a capped container; by hand or called by CI |
+| `.github/workflows/vm.yml` | runs the report on dblp-vm on demand, over SSH (secrets VM_HOST, VM_USER, VM_SSH_KEY), in a capped container |
 
 ## Report plan
 
@@ -28,7 +28,7 @@ can be trusted and explained.
 | 7 | Models: baselines, LR, RF, gradient boosting, MLP; 5-fold CV (Q1) | done |
 | 8 | Final model on the test set; explanation; points score | done |
 | 9 | Reliability: cleaning strategies, reproduced leakage, calibration, subgroups (Q2, Q3) | done |
-| 10 | Using the model on a new patient (`cardio.py train` / `predict`) | done |
+| 10 | Using the model on a new patient (`assess(load_final(), patient(...))`) | done |
 | 11 | Conclusion, limitations, references | done |
 | - | Presentation (`presentation/`) | done |
 
@@ -36,7 +36,7 @@ can be trusted and explained.
 
 `presentation/build.py` builds `presentation/Cardio-Risk.pptx` (15 slides + 3 backup, Morph
 transitions, speaker notes) from the Slidesgo "Child Meningitis Case Study" template recoloured red. It
-reads the scorecard and the command-line example from `outputs/model.joblib`, so fetch the latest VM run's
+reads the scorecard and the patient example from `outputs/model.joblib`, so fetch the latest VM run's
 model first. `presentation/script.md` is the spoken script (~8 minutes at 140 words a minute).
 
 ## Submission
@@ -47,7 +47,9 @@ either format, and the notebook is self-contained.
 
 ## Running
 
-On the VM (Actions → VM → Run workflow): `action=run`, `job=report`. The executed notebook,
+On the VM (Actions → VM → Run workflow): `action=run`, `job=report`, about 20 minutes. When only
+the text of `report.md` changes afterwards, `python build_report.py --reuse-outputs <executed.ipynb>`
+rebuilds the notebook with that run's outputs; it refuses if any code cell differs. The executed notebook,
 figures and tables come back as the run's artifact; a job that outlives `wait` keeps running and is
 fetched later with `action=collect` and its `run_id`.
 
