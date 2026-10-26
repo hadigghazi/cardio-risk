@@ -111,10 +111,11 @@ blood-pressure repair rules were tightened (Section 4.2); the random-forest and 
 were widened, because their best settings had sat at the edges (Section 7.2); the model's operating
 point against the guideline rule is now chosen on training patients, where the earlier version
 matched the rule's specificity on the test set (Section 8.1); the points score now reads its risks
-from the training patients' rates at each total; further confidence intervals were added; and the
-rule behind the clinical scorecard was written down (Section 8.5). None of these changes touched the
-split, the plausibility checks, the gradient-boosting grid or the selection rule. The chosen model,
-its setting and its test results are the same as before.
+from the training patients' rates at each total; the standard error in the selection rule now uses
+the sample standard deviation for every model, as it already did for the baselines; further
+confidence intervals were added; and the rule behind the clinical scorecard was written down (Section
+8.5). None of these changes touched the split, the plausibility checks, the gradient-boosting grid or
+the order of simplicity. The chosen model, its setting and its test results are the same as before.
 
 ## 3. The data
 

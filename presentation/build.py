@@ -394,12 +394,12 @@ text(s, 3.85, 4.05, 2.4, 0.9, "r = 0.43", size=30, font=HEAD, bold=True, color=D
      anchor=MSO_ANCHOR.MIDDLE, name="!!r_clean")
 text(s, 6.2, 4.12, 2.9, 0.85, "How closely systolic pressure tracks the diagnosis, before and after cleaning",
      size=11.5, anchor=MSO_ANCHOR.MIDDLE)
-notes(s, "The first finding came before any model. About two percent of the records hold blood pressures no "
-         "living person can have: sixteen thousand, minus one hundred and fifty, zero. They are not random. "
-         "Most are typing errors with a pattern: an extra zero, centimetres of mercury instead of millimetres, a "
-         "stray minus sign, or the two readings swapped. I compared dropping these records with repairing them "
-         "by rule. Either way the effect is dramatic: in the raw data systolic pressure barely correlates with "
-         "the diagnosis, 0.05. After cleaning it is the strongest predictor, 0.43.")
+notes(s, "The first finding came before any model. About two percent of the records hold values no living "
+         "person can have, nearly all of them blood pressures: sixteen thousand, minus one hundred and "
+         "fifty, zero. Most are typing errors with a pattern: an extra zero, centimetres instead of "
+         "millimetres of mercury, a stray minus sign, or the two readings swapped. And three in four of "
+         "these records belong to sick patients. Dropped or repaired, the effect is dramatic: systolic "
+         "pressure's correlation with the diagnosis goes from 0.05 to 0.43.")
 
 # 5 ---------------------------------------------------------------- what the data shows
 s = new("TITLE_ONLY"); S.append(s)
@@ -415,21 +415,23 @@ notes(s, "Here is the clean data, on the training patients only. The disease rat
 s = new("TITLE_ONLY"); S.append(s)
 title(s, "The smoking paradox")
 figure(s, "fig3_smoking_paradox.png", 0.62, 1.3, w=5.0, crop=(0, 0.085, 1, 1))
-text(s, 0.79, 4.45, 4.8, 0.6, "Men only: women hardly smoke in this data (1.8% vs 22% of men)", size=11, color=MUTED)
+text(s, 0.79, 4.38, 5.0, 0.7, [[("Same age, men: smokers have 3.1 points less CVD (95% CI 1.5 to 4.9). ",
+     {"bold": True, "color": NAVY})], [("Women hardly smoke here (1.8%, against 22% of men).", {})]], size=11,
+     color=MUTED, space=2)
 box(s, 5.95, 1.3, 3.27, 3.8, fill=SOFT)
 circle_icon(s, "hospital", 6.2, 1.5, d=0.6, fill=RED)
 text(s, 6.95, 1.6, 2.15, 0.45, "The sick quitter", size=15, font=HEAD, bold=True, anchor=MSO_ANCHOR.MIDDLE)
-text(s, 6.2, 2.28, 2.85, 1.2, "A likely reason: diagnosis and answers come from the same visit, and patients "
+text(s, 6.2, 2.28, 2.85, 1.2, "A possible reason: diagnosis and answers come from the same visit, and patients "
      "already diagnosed may have quit, so they answer \"no\".", size=12)
 for i, t in enumerate(["Detection, not prediction", "Associations, not causes"]):
     c = box(s, 6.2, 3.65 + i * 0.6, 2.8, 0.45, fill=NAVY, radius=0.3)
     label_in(c, t, size=12, font=HEAD)
-notes(s, "That is the smoking paradox. Smoking causes heart disease, so I checked for a confounder. Almost only "
-         "men smoke in this data, so I compared within men, age group by age group. The paradox survives: "
-         "smokers have less disease at every age. The likely reason is how the data was collected. Diagnosis "
-         "and answers come from the same visit, and patients who were diagnosed have usually been told to quit. "
-         "Two consequences: this is detection of existing disease, not prediction of future disease, and every "
-         "effect we find is an association, not a cause.")
+notes(s, "That is the smoking paradox. Smoking causes heart disease, so I checked for a confounder: most "
+         "smokers here are men, so I compared men of the same age. The paradox survives: smokers have 3.1 "
+         "points less disease, and the interval excludes zero. A possible reason, which the data cannot "
+         "test: diagnosis and answers come from the same visit, so patients already diagnosed may have "
+         "quit. Either way, this is detection of existing disease, not prediction, and every effect is an "
+         "association, not a cause.")
 
 # 7 ---------------------------------------------------------------- models vs baselines (morph source)
 AX0, AXW = 3.55, 5.0                       # x of 50% accuracy and width for 50 -> 100%
@@ -463,9 +465,9 @@ s = new("TITLE_ONLY"); S.append(s)
 title(s, "What machine learning adds")
 bars(s, [("a", "Gradient boosting", 73.6, "  AUC 0.804", NAVY),
          ("b", "Random forest", 73.4, "  AUC 0.803", NAVY),
-         ("c", "Neural network", 73.4, "  AUC 0.803", NAVY),
+         ("c", "Neural network", 73.1, "  AUC 0.800", NAVY),
          ("d", "Logistic regression", 72.6, "  AUC 0.793", NAVY),
-         ("e", "Points score (4 factors)", 72.3, "  AUC 0.793", RED),
+         ("e", "Points score (4 factors)", 72.4, "  AUC 0.793", RED),
          ("f", "Rule: systolic ≥ 130", 71.3, "  AUC 0.712", GREY),
          ("g", "Framingham, as published", 64.6, "  AUC 0.693", GREY)])
 text(s, 0.79, 4.95, 8.4, 0.3, "Accuracy on 13,722 test patients never used for training or tuning", size=10.5,
@@ -474,26 +476,30 @@ notes(s, "Now the models. Everything was tuned with five-fold cross-validation o
          "these accuracies are on 13,722 test patients the models never saw. At the bottom, the Framingham score "
          "as published: 64.6 percent. It was built for a different question, a first event within ten years, and "
          "it does not transfer. The guideline rule, systolic at least 130, already gets 71.3. Logistic regression "
-         "72.6. Random forest, the neural network and gradient boosting are tied, around 73.5. The best is "
-         "gradient boosting: 73.6 percent, AUC 0.804. Machine learning helps, but by about two points.")
+         "72.6. Random forest, the neural network and gradient boosting are close together, between 73.1 and "
+         "73.6. The best is gradient boosting: 73.6 percent, AUC 0.804. Machine learning helps, but by about two "
+         "points.")
 
 # 8 ---------------------------------------------------------------- test results
 s = new("TITLE_ONLY"); S.append(s)
 title(s, "On patients the model has never seen")
-stats = [("0.804", "ROC AUC  (95% CI 0.797-0.811)"), ("73.6%", "accuracy, as in cross-validation"),
-         ("+301", "diseased patients found, at the rule's specificity")]
+stats = [("0.804", "ROC AUC\n95% CI 0.797-0.811"), ("73.6%", "accuracy\n95% CI 72.9-74.4%"),
+         ("+274", "more diseased patients found than by the rule, at matched specificity\n95% CI +220 to +332")]
 for i, (n, l) in enumerate(stats):
     y = 1.35 + i * 1.22
     box(s, 0.79, y, 4.05, 1.02, fill=SOFT)
     text(s, 1.0, y + 0.08, 1.75, 0.85, n, size=28, font=HEAD, bold=True, color=DKRED, anchor=MSO_ANCHOR.MIDDLE,
          name="!!stat%d" % i)
-    text(s, 2.75, y + 0.08, 1.95, 0.85, l, size=12, anchor=MSO_ANCHOR.MIDDLE)
-figure(s, "fig8_roc_test.png", 5.25, 1.25, h=3.95, crop=(0, 0.045, 1, 1))
+    head, ci = l.split("\n")
+    text(s, 2.75, y + 0.08, 1.95, 0.85, [head, [(ci, {"color": MUTED, "size": 11})]], size=12,
+         anchor=MSO_ANCHOR.MIDDLE, space=2)
+figure(s, "fig8_roc_test.png", 5.25, 1.25, h=3.95, crop=(0, 0.052, 1, 1))
 notes(s, "On unseen patients, gradient boosting reaches an AUC of 0.804, with a confidence interval from 0.797 to "
-         "0.811, and 73.6 percent accuracy, the same as in cross-validation, so it did not overfit. The most "
-         "concrete way to see the gain: at exactly the rule's specificity, the model finds 301 more of the 6,785 "
-         "diseased patients. And the learning curve is flat, so more data of the same kind would not help: the "
-         "ceiling is set by what the examination records.")
+         "0.811, and 73.6 percent accuracy, close to its cross-validated 73.5, so it did not overfit. The most "
+         "concrete way to see the gain: I chose the model's cut-off on training data to match the rule's "
+         "specificity, then scored both once on the test patients. The model finds 274 more of the 6,785 "
+         "diseased patients, with no clear difference in false alarms. And the learning curve flattens, so "
+         "more data of the same kind would add little: the limit seems to lie in what the examination records.")
 
 # 9 ---------------------------------------------------------------- what drives it
 s = new("TITLE_ONLY"); S.append(s)
@@ -509,17 +515,19 @@ for i, (lab, v) in enumerate(IMPORTANCE):
             shape=MSO_SHAPE.RECTANGLE)
     text(s, 2.45 + v / 0.21 * 2.75 + 0.07, y, 0.6, 0.26, "%.3f" % v, size=10, color=MUTED, anchor=MSO_ANCHOR.MIDDLE)
 text(s, 0.79, 4.1, 5.1, 0.95, [[("Drop in test AUC when a factor is scrambled. ", {"bold": True}),
-     ("Blood pressure dominates; glucose, the lifestyle answers and sex add almost nothing.", {})]], size=11.5)
-box(s, 6.15, 1.3, 3.07, 3.8, fill=SOFT)
-figure(s, "fig11_partial_dependence.png", 6.25, 1.42, w=2.87, crop=(0.0, 0.07, 0.27, 0.52))
-text(s, 6.35, 3.62, 2.7, 1.4, [[("A switch, not a slope: ", {"bold": True, "color": DKRED}),
-     ("predicted risk jumps from about 35% to 84% between 125 and 150 mmHg, at the guideline's thresholds.", {})]],
+     ("Retrained without blood pressure, a model still reaches 0.70; the other factors are just weaker.", {})]],
      size=11.5)
-notes(s, "What does the model rely on? Scramble the blood-pressure features and the AUC drops by 0.21. Age and "
-         "cholesterol follow, at 0.036 and 0.030. Glucose, the lifestyle answers and sex add almost nothing. "
-         "The shape matters too: predicted risk stays around a third below 125, jumps to 84 percent by 150, and "
-         "then stays flat. It works like a switch at the guideline's thresholds, which is exactly what a "
-         "straight-line model cannot capture.")
+box(s, 6.15, 1.3, 3.07, 3.8, fill=SOFT)
+figure(s, "fig11_partial_dependence.png", 6.25, 1.42, w=2.87, crop=(0.0, 0.07, 0.275, 0.52))
+text(s, 6.35, 3.62, 2.7, 1.4, [[("More a switch than a slope: ", {"bold": True, "color": DKRED}),
+     ("predicted risk rises from about 40% at 120 mmHg to 80% at 140, then levels off.", {})]],
+     size=11.5)
+notes(s, "What does the model rely on? Scramble the blood-pressure features and its AUC drops by 0.21; age "
+         "and cholesterol follow. Glucose, the lifestyle answers and sex add very little. Retrained "
+         "without blood pressure, a model still reaches 0.70, so the other factors are weaker, not "
+         "useless. The shape: predicted risk is about 40 percent at 120, 80 at 140, then levels off. "
+         "Rounded readings and the stage feature may sharpen those steps, but it is clearly not a straight "
+         "line.")
 
 # 10 --------------------------------------------------------------- points score
 s = new("TITLE_ONLY"); S.append(s)
@@ -541,54 +549,60 @@ for i, (factor, g) in enumerate(CARD.groupby("factor", sort=False)):
              color=DKRED if pts else MUTED, align=PP_ALIGN.CENTER)
 risk_line = "   ·   ".join("%d points → %.0f%%" % (k, 100 * v) for k, v in RISK_AT.items())
 text(s, 0.79, 4.45, 8.43, 0.3, risk_line, size=12, bold=True, align=PP_ALIGN.CENTER)
-text(s, 0.79, 4.82, 8.43, 0.3, "AUC 0.793 on the test patients, against 0.804 for the best model. The lifestyle "
-     "answers are left out: they would earn negative points.", size=11, color=MUTED, align=PP_ALIGN.CENTER)
-notes(s, "Since the gains are small, I also built something a doctor can use with a pen. Four factors, and each "
-         "band earns whole points: age, systolic pressure, BMI and cholesterol. I left out the lifestyle answers, "
-         "because in this data they would earn negative points, and no one can hand out a score that rewards "
-         "smoking. Add up the points and the total maps to a risk. This card reaches an AUC of 0.793, the same as "
-         "logistic regression on all fifteen features, and only 0.011 below the best model.")
+text(s, 0.79, 4.82, 8.43, 0.3, "AUC 0.793 on the test patients, against 0.804 for the best model. Measured values "
+     "only: the self-reported answers and glucose are left out.", size=11, color=MUTED, align=PP_ALIGN.CENTER)
+notes(s, "Since the gains are small, I also built something a doctor can use with a pen: four factors, "
+         "each band earning whole points. The rule: keep measured values whose points go the way medicine "
+         "expects. In the full card, smoking, alcohol and high glucose earned negative points, and no one "
+         "can hand out a score that rewards smoking. The total maps to a risk read from the training "
+         "patients. This card reaches an AUC of 0.793, practically that of logistic regression, and only 0.012 "
+         "below the best model.")
 
 # 11 --------------------------------------------------------------- leakage (morph target)
 s = new("TITLE_ONLY"); S.append(s)
 title(s, "How 90% accuracy can happen")
 bars(s, [("a", "Honest: unseen patients", 73.6, "  gradient boosting", NAVY),
-         ("b", "Luckiest of 50 random splits", 73.4, "", GREY),
+         ("b", "Luckiest of 50 random splits", 73.4, "  logistic regression", GREY),
          ("c", "SMOTE before the split", 86.7, "", RED),
          ("d", "Scored on its own training data", 99.9, "", RED)], top=1.45, step=0.62, inside_above=80)
+for key, row, model in [("c", 2, "random forest"), ("d", 3, "random forest")]:
+    text(s, AX0 + 0.08, 1.45 + row * 0.62, 2.0, 0.36, model, size=10.5, color=WHITE, anchor=MSO_ANCHOR.MIDDLE,
+         name="!!model_" + key)
 for v, lab, side in [(88.09, "88% (Omkari 2024)", "left"), (94.5, "94.5% (Auvee 2026)", "right")]:
     box(s, ax(v) - 0.07, 4.14, 0.14, 0.14, fill=DKRED, shape=MSO_SHAPE.ISOSCELES_TRIANGLE)
     if side == "left":
         text(s, ax(v) - 1.65, 4.33, 1.6, 0.25, lab, size=10, bold=True, color=DKRED, align=PP_ALIGN.RIGHT)
     else:
         text(s, ax(v) + 0.05, 4.33, 1.6, 0.25, lab, size=10, bold=True, color=DKRED)
-text(s, 0.79, 4.75, 8.43, 0.45, [[("Same data, same models; only the evaluation changes. ", {"bold": True}),
-     ("Red markers: accuracies published for this dataset.", {"color": MUTED})]], size=12, align=PP_ALIGN.CENTER)
-notes(s, "Back to the second question. Papers on this same dataset report 88 and even 94.5 percent. I reproduced "
+text(s, 0.79, 4.7, 8.43, 0.5, [[("Same data; only the evaluation changes. ", {"bold": True}),
+     ("Red markers: accuracies published for this dataset; how they were obtained is not known.",
+      {"color": MUTED})]], size=11.5, align=PP_ALIGN.CENTER)
+notes(s, "Back to the second question. Papers on this dataset report 88 and even 94.5 percent. I reproduced "
          "three common mistakes. Choosing the luckiest of 50 random splits barely matters: 73.4. Oversampling "
-         "with SMOTE before splitting puts near-copies of training patients into the test set: 86.7 percent. "
-         "Scoring a model on its own training patients gives 99.9. Same data, same models, only the evaluation "
-         "changed. I cannot know what those papers did, but on this data an accuracy far above 74 percent "
-         "should be read as a sign of leakage.")
+         "with SMOTE before splitting puts near-copies of training patients into the test set: a random forest "
+         "then reports 86.7 percent, against 71 on truly unseen patients. Scoring a model on its own training "
+         "patients gives 99.9. Same data, only the evaluation changed. I cannot know what those papers did, but "
+         "on this data an accuracy far above 74 percent is a reason to check the evaluation before believing it.")
 
 # 12 --------------------------------------------------------------- trust
 s = new("TITLE_ONLY"); S.append(s)
 title(s, "Can the predictions be trusted?")
 figure(s, "fig13_calibration.png", 0.62, 1.25, h=3.95, crop=(0, 0.06, 1, 1))
-trust = [("scale", "Calibrated", "patients given 20% have CVD about 20% of the time"),
-         ("people", "Women and men alike", "AUC 0.803 and 0.808"),
-         ("hourglass", "Weaker over 60", "AUC 0.72, against 0.84 under 50"),
+trust = [("scale", "Calibrated in this sample", "patients given 20% have CVD about 20% of the time"),
+         ("people", "Women and men: similar", "AUC 0.803 and 0.808, a gap within the noise"),
+         ("hourglass", "Older patients: harder", "AUC 0.72 over 60, 0.84 under 50; blood pressure alone drops too"),
          ("target", "1 in 5 sick? 44% of flags right", "a reason to look closer, not a diagnosis")]
 for i, (ic, h, b) in enumerate(trust):
     y = 1.32 + i * 0.95
     circle_icon(s, ic, 5.15, y, d=0.55, fill=RED if i == 3 else NAVY)
     text(s, 5.85, y - 0.03, 3.4, 0.32, h, size=13.5, font=HEAD, bold=True)
     text(s, 5.85, y + 0.29, 3.4, 0.5, b, size=11.5, color=MUTED)
-notes(s, "Third question: can the risks be trusted? The model is well calibrated: patients given 20 percent have "
-         "the disease about 20 percent of the time. Women and men are served equally. It is weaker for patients "
-         "over 60, an AUC of 0.72 against 0.84 under 50, because most older patients have high pressure and most "
-         "have the disease. And in a check-up population where one patient in five is sick, only 44 percent of "
-         "flagged patients would really have it. So a positive result means: worth a closer look, not a diagnosis.")
+notes(s, "Third question: can the risks be trusted? In this sample, yes: patients given 20 percent have "
+         "the disease about 20 percent of the time. Women and men get similar results. Older patients are "
+         "harder to separate, 0.72 over 60 against 0.84 under 50, but blood pressure alone drops the same "
+         "way, so that is the data more than the model. And where one patient in five is sick, only 44 "
+         "percent of flagged patients would really have it: a positive result means worth a closer look, "
+         "not a diagnosis.")
 
 # 13 --------------------------------------------------------------- the tool
 s = new("TITLE_ONLY"); S.append(s)
@@ -618,12 +632,12 @@ notes(s, "The last section of the notebook turns the model into a check of a new
 # 14 --------------------------------------------------------------- conclusions
 s = new("TITLE_ONLY"); S.append(s)
 title(s, "Conclusions")
-concl = [("bars", "Q1 · A real but small gain", "+2.3 points over the guideline rule; the ceiling of about 74% is "
-          "set by what the examination records"),
-         ("database", "Q2 · Handling beats algorithms", "Cleaning rescues linear models; leakage can manufacture "
-          "almost any accuracy"),
-         ("stethoscope", "Q3 · Trustworthy, within limits", "Calibrated and equal for both sexes; weaker over 60; "
-          "associations, not causes")]
+concl = [("bars", "Q1 · A real but small gain", "+2.3 points of accuracy over the guideline rule (95% CI 1.8 "
+          "to 2.9); the limit seems to lie in what the examination records"),
+         ("database", "Q2 · Handling matters more", "Dirty records cost the linear model 0.017 AUC; two leakage "
+          "mistakes report 85-100% from the same data"),
+         ("stethoscope", "Q3 · Trustworthy, within limits", "Calibrated in this sample; similar for both sexes; "
+          "harder over 60, for blood pressure too; associations, not causes")]
 for i, (ic, h, b) in enumerate(concl):
     x = 0.79 + i * 2.88
     box(s, x, 1.3, 2.6, 2.75, fill=SOFT)
@@ -632,13 +646,15 @@ for i, (ic, h, b) in enumerate(concl):
     text(s, x + 0.2, 2.82, 2.25, 1.2, b, size=11.5)
 text(s, 0.79, 4.25, 8.43, 0.8, [[("Limitations: ", {"bold": True, "color": DKRED}),
      ("detects existing disease, cannot forecast · undocumented source and diagnosis · no treatment data · "
-      "a 50/50 sample · one dataset, no external validation", {})]], size=11.5)
-notes(s, "To conclude. Machine learning adds something real but small: two points over the guideline rule, and the "
-         "ceiling of about 74 percent is set by the data. Data handling matters more than the algorithm: "
-         "cleaning rescues linear models, and leakage can manufacture almost any accuracy. And the predictions "
-         "are trustworthy within limits. The main limitations: this detects existing disease and cannot "
-         "forecast, the data's source and diagnosis definition are unknown, and treatment is not recorded. The "
-         "next step would be data from a known clinic, followed over time.")
+      "a 50/50 sample · implausible records mostly from sick patients · one dataset, no external validation",
+      {})]], size=11)
+notes(s, "To conclude. Machine learning adds something real but small: about two points over the guideline "
+         "rule, and the limit near 74 percent seems to lie in the data. Data handling can move reported "
+         "numbers far more than the algorithm: dirty records cost the linear model accuracy, and two leakage mistakes "
+         "report 85 to 100 percent. The predictions are trustworthy within limits. The main limitations: "
+         "it detects existing disease and cannot forecast, the source and diagnosis definition are "
+         "unknown, and treatment is not recorded. The next step: data from a known clinic, followed over "
+         "time.")
 
 # 15 --------------------------------------------------------------- thanks
 s = new("BLANK_1_1_1_1_1_1_2"); S.append(s)
@@ -682,45 +698,52 @@ title(s, "Backup: every candidate on the test set")
 table(s, [("Model", "Test AUC", "95% CI", "CV AUC", "Accuracy", "Sensitivity", "Specificity"),
           ("Gradient boosting", "0.804", "0.797-0.811", "0.801", "73.6%", "68.9%", "78.2%"),
           ("Random forest", "0.803", "0.796-0.810", "0.799", "73.4%", "68.5%", "78.1%"),
-          ("Neural network (MLP)", "0.803", "0.795-0.810", "0.799", "73.4%", "71.0%", "75.7%"),
-          ("Points score (all factors)", "0.795", "0.788-0.803", "-", "72.5%", "64.3%", "80.6%"),
+          ("Neural network (MLP)", "0.800", "0.793-0.808", "0.800", "73.1%", "70.6%", "75.6%"),
           ("Logistic regression", "0.793", "0.785-0.800", "0.790", "72.6%", "66.8%", "78.2%"),
           ("Framingham form, refitted", "0.780", "0.773-0.788", "0.780", "71.4%", "66.3%", "76.3%"),
           ("Systolic pressure alone", "0.754", "0.746-0.761", "0.751", "71.3%", "61.8%", "80.6%"),
           ("Rule: systolic ≥ 130 mmHg", "0.712", "0.704-0.719", "0.712", "71.3%", "61.8%", "80.6%"),
           ("Framingham, as published", "0.693", "0.684-0.701", "0.696", "64.6%", "74.0%", "55.5%")],
       [2.6, 0.9, 1.15, 0.85, 0.95, 1.0, 0.98])
+text(s, 0.79, 4.75, 8.43, 0.4, "Clinical points card (4 factors): AUC 0.793 (0.785-0.800), accuracy 72.4%. Accuracy "
+     "of gradient boosting: 95% CI 72.9-74.4%.", size=10.5, color=MUTED)
 notes(s, "Backup. Every candidate scored once on the test patients, with bootstrap intervals for the AUC and the "
-         "cross-validated AUC for comparison. Gradient boosting's lead over random forest and the neural network "
-         "is under 0.002: statistically detectable, clinically meaningless.")
+         "cross-validated AUC for comparison. Gradient boosting leads random forest by 0.0015 and the neural "
+         "network by 0.004: too small to matter clinically.")
 
 # 17 --------------------------------------------------------------- backup: cleaning strategies
 s = new("TITLE_ONLY"); S.append(s)
 title(s, "Backup: cleaning strategies")
-table(s, [("Trained on", "Gradient boosting AUC", "Accuracy", "Logistic regression AUC", "Accuracy"),
-          ("Raw data (69,976 records)", "0.804", "73.6%", "0.776", "71.8%"),
-          ("Implausible records dropped (68,581)", "0.804", "73.6%", "0.793", "72.6%"),
-          ("Entry errors repaired (69,838)", "0.805", "73.6%", "0.793", "72.6%")],
+table(s, [("Training data", "Gradient boosting AUC", "Accuracy", "Logistic regression AUC", "Accuracy"),
+          ("Raw (55,980 training patients)", "0.804", "73.6%", "0.776", "71.8%"),
+          ("Implausible records dropped (54,859)", "0.804", "73.6%", "0.793", "72.6%"),
+          ("Entry errors repaired (55,865)", "0.804", "73.6%", "0.793", "72.6%")],
       [3.35, 1.55, 0.95, 1.65, 0.93], row_h=0.42, size=11)
-text(s, 0.79, 3.25, 8.43, 1.5, ["All six models are scored on the same test patients, those whose records pass "
-     "every check.", "Trees split on the order of values, so absurd readings simply land in the top branch. A "
-     "straight-line model is pulled by them: its blood-pressure coefficient shrinks towards zero."], size=12, space=8)
-notes(s, "Backup. Gradient boosting is unaffected by the cleaning strategy; logistic regression loses 0.017 AUC on "
+text(s, 0.79, 3.25, 8.43, 1.7, ["All six models are scored on the same 13,722 test patients, those whose records "
+     "pass every check. Raw data costs gradient boosting 0.0008 AUC (95% CI 0.0001-0.0014) and logistic "
+     "regression 0.017 (95% CI 0.014-0.019).", "Trees split on the order of values, so absurd readings simply land "
+     "in the top branch. A straight-line model is pulled by them: its weights for the pressure readings shrink to "
+     "3-35% of their clean size, and the blood-pressure stage, which caps any reading at stage 3, takes over much "
+     "of the signal."], size=11.5, space=8)
+notes(s, "Backup. Gradient boosting barely notices the cleaning strategy; logistic regression loses 0.017 AUC on "
          "the raw data. Repairing and dropping give the same result.")
 
 # 18 --------------------------------------------------------------- backup: subgroups
 s = new("TITLE_ONLY"); S.append(s)
 title(s, "Backup: who the model serves well")
-table(s, [("Group", "Patients", "Share with CVD", "Mean predicted", "AUC", "Sensitivity", "Specificity"),
-          ("Women", "8,858", "49.2%", "48.7%", "0.803", "68.0%", "78.6%"),
-          ("Men", "4,864", "49.9%", "50.7%", "0.808", "70.4%", "77.6%"),
-          ("Age under 50", "4,361", "36.8%", "36.3%", "0.835", "59.0%", "91.4%"),
-          ("Age 50-59", "6,900", "50.8%", "51.6%", "0.768", "64.2%", "77.7%"),
-          ("Age 60 and over", "2,461", "67.9%", "66.5%", "0.718", "88.1%", "34.7%"),
-          ("Everyone", "13,722", "49.4%", "49.4%", "0.804", "68.9%", "78.2%")],
-      [2.0, 1.0, 1.3, 1.3, 0.85, 1.0, 0.98], row_h=0.38, size=11)
-notes(s, "Backup. Calibrated in every group: the mean predicted risk is within 1.5 points of the observed share. "
-         "Discrimination falls with age, and at the 0.5 cut-off older patients are mostly flagged.")
+table(s, [("Group", "Patients", "With CVD", "Predicted", "AUC (95% CI)", "Systolic alone", "Sens.", "Spec."),
+          ("Women", "8,858", "49.2%", "48.7%", "0.803 (0.794-0.812)", "0.756", "68.0%", "78.6%"),
+          ("Men", "4,864", "49.9%", "50.7%", "0.808 (0.796-0.819)", "0.752", "70.4%", "77.6%"),
+          ("Age under 50", "4,361", "36.8%", "36.3%", "0.835 (0.822-0.847)", "0.796", "59.0%", "91.4%"),
+          ("Age 50-59", "6,900", "50.8%", "51.6%", "0.768 (0.756-0.779)", "0.730", "64.2%", "77.7%"),
+          ("Age 60 and over", "2,461", "67.9%", "66.5%", "0.718 (0.696-0.740)", "0.681", "88.1%", "34.7%"),
+          ("Everyone", "13,722", "49.4%", "49.4%", "0.804 (0.797-0.811)", "0.754", "68.9%", "78.2%")],
+      [1.55, 0.8, 0.85, 0.9, 1.75, 1.05, 0.75, 0.78], row_h=0.38, size=10.5)
+text(s, 0.79, 4.2, 8.43, 0.8, "AUC, men minus women: +0.005 (95% CI -0.011 to +0.020). \"Predicted\" is the mean "
+     "predicted risk (calibration-in-the-large).", size=10.5, color=MUTED)
+notes(s, "Backup. On average the risks hold in every group: the mean predicted risk is within 1.5 points of the "
+         "observed share. Discrimination falls with age for the model and for systolic pressure alone, and at the "
+         "0.5 cut-off most older patients are flagged because most of them are sick.")
 
 # ------------------------------------------------------------------ tidy, morph, save
 for s in S:
