@@ -8,7 +8,7 @@ The brief is in `brief/`. Deliverables: the report notebook (with all the code i
 | `cardio.py` | single source of all project code; `build_report.py` copies its sections into the notebook; also a CLI |
 | `report.md` | source of the report; `build_report.py` turns it into `outputs/report.ipynb` and executes it |
 | `report.ipynb` | the executed report from the latest VM run (the deliverable) |
-| `PROJECT-GUIDE.md` | the whole project explained: every decision, every notebook cell, the results and the audit |
+| `PROJECT-GUIDE.md` | the whole project explained: every decision, every notebook cell, the results and why they can be trusted |
 | `tests/` | unit tests: cleaning and repair rules, features, Framingham, metrics and cut-offs, scorecard, patient checks, notebook build |
 | `.github/workflows/ci.yml` | every push: tests on GitHub's runner (the report runs on demand, see below) |
 | `.github/workflows/vm.yml` | runs the report on dblp-vm on demand, over SSH (secrets VM_HOST, VM_USER, VM_SSH_KEY), in a capped container |

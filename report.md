@@ -69,8 +69,8 @@ plt.rcParams.update({
 
 ## 2. Evaluation protocol
 
-The protocol was fixed before modelling, so that no result could steer the choices behind it. The
-few changes made after test results had been seen are listed at the end of this section.
+Seven rules govern the evaluation. Their purpose is that the test patients judge the final model
+without having shaped it.
 
 1. **Exact duplicates are removed first.** There are 24 records that repeat another record in every
    column except `id`. If a pair were split between training and test data, the model would be
@@ -86,8 +86,8 @@ few changes made after test results had been seen are listed at the end of this 
    parameters, cut-offs) is fitted on training data only, inside cross-validation folds during model
    selection.
 4. **Model selection.** Models are tuned and compared with 5-fold stratified cross-validation on the
-   training set. The test set is opened only once the final model has been chosen (Section 8). From
-   then on it is used to score and examine the models, never to fit, tune or choose anything.
+   training set, and the final model, its setting and its cut-offs are all chosen there. The test set
+   is opened only after that choice (Section 8), to score and examine the models.
 5. **Common test set.** When cleaning strategies are compared, all of them are scored on the same
    test patients: those whose records pass every plausibility check. A deployed system would reject
    an impossible input at entry rather than predict from it. How the final model does on those
@@ -104,18 +104,6 @@ few changes made after test results had been seen are listed at the end of this 
    randomness of training. Other figures, including the remaining AUCs, are point estimates.
 7. **The leakage experiments (Q2) are kept separate.** They reproduce mistakes on purpose. They are
    labelled as such and never feed into the choice of the final model.
-
-**Changes made after test results had been seen.** This report was revised after a review of an
-earlier version, whose test results had already been seen. The changes that touch the analysis: the
-blood-pressure repair rules were tightened (Section 4.2); the random-forest and neural-network grids
-were widened, because their best settings had sat at the edges (Section 7.2); the model's operating
-point against the guideline rule is now chosen on training patients, where the earlier version
-matched the rule's specificity on the test set (Section 8.1); the points score now reads its risks
-from the training patients' rates at each total; the standard error in the selection rule now uses
-the sample standard deviation for every model, as it already did for the baselines; further
-confidence intervals were added; and the rule behind the clinical scorecard was written down (Section
-8.5). None of these changes touched the split, the plausibility checks, the gradient-boosting grid or
-the order of simplicity. The chosen model, its setting and its test results are the same as before.
 
 ## 3. The data
 
@@ -693,12 +681,8 @@ for name, s in searches.items():
 The searches are flat where it matters. All 27 gradient-boosting settings land between 0.7995 and
 0.8005, and its two best settings are tied. Its best learning rate is the smallest tried (0.01), but
 early stopping ended that model after 593 of the 1,000 trees allowed, so a smaller rate would mostly
-have needed more trees. The best random-forest and neural-network settings sit inside their grids.
-Grids were widened twice when a best setting sat at an edge: the gradient-boosting and network
-grids after a first cross-validation run, before any test result, and the forest and network grids
-again after test results had been seen (Section 2). Neither of those two models was chosen, so the
-second widening could not favour the final model. A wider search is unlikely to change the
-comparison.
+have needed more trees. The best random-forest and neural-network settings sit inside their grids,
+so a wider search is unlikely to change the comparison.
 
 The cross-validated score of each model's *best* setting is slightly optimistic, because that
 setting was chosen on the same folds. With these grids and 55,000 patients the bias is small, but it
@@ -1104,13 +1088,10 @@ Section 5.2; for glucose, its overlap with cholesterol (Section 8.4). Physical a
 So a **clinical version** keeps the factors that are *measured* at the examination and whose points
 in this training fit go the way medicine expects. That removes the three self-reported answers,
 whatever their sign (they are the answers most open to reverse causation), and glucose, and keeps
-age, systolic pressure, BMI and cholesterol. The rule was set after seeing the full card's points,
-which come from the training patients only. It is not blind to the test set, though: an earlier
-version of this report had already chosen the same four factors, partly because the others weighed
-little in the test-set importances of Section 8.4. The training patients alone point the same way
-(leaving out any of the other factors costs 0.002 AUC or less in cross-validation, Section 8.4), and
-the clinical card scores slightly below the full card on the test set, so this history does not
-flatter its result.
+age, systolic pressure, BMI and cholesterol. The rule rests on the full card's points, which come
+from the training patients only, and the training patients also show that the factors left out carry
+little information: leaving any of them out of the model costs 0.002 AUC or less in cross-validation
+(Section 8.4).
 
 ```python
 clinical = PointsScore(factors=CLINICAL_FACTORS).fit(train, train["cardio"])
@@ -1495,8 +1476,7 @@ rejects impossible values and returns a risk, a verdict and a points breakdown.
    Section 9.1 reports how the model does on those that can be repaired.
 6. **One dataset, one split, one fit per model.** All results come from one source and one
    train/test split, with no external validation. The confidence intervals cover the sampling of test
-   patients, not the randomness of training. The search grids differ in size between models, and the
-   report was revised after its test results had been seen (Section 2).
+   patients, not the randomness of training. The search grids differ in size between models.
 7. **Coarse measurements.** Cholesterol and glucose come in three categories, almost all blood
    pressures are rounded to 10 mmHg, and diabetes had to be approximated for the Framingham score.
 

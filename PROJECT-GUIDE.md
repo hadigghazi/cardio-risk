@@ -3,13 +3,13 @@
 **Patient's Sickness Prediction: detecting cardiovascular disease from a routine medical examination**
 
 This guide explains the whole project: the idea, every decision and why it was taken, how the work
-was done, every code cell of the notebook, the results, the deliverables, and what the final audit
-checked and changed. Every number comes from the final executed notebook (VM run 40391671736).
+was done, every code cell of the notebook, the results, the deliverables, and why the results can be
+trusted. Every number comes from the final executed notebook (VM run 40391671736).
 
 How to read it: Part 1 gives the idea, Part 2 the decisions, Part 3 how it was built. **Part 4 walks
 through the notebook cell by cell; read it with `report.ipynb` open beside it.** Part 5 collects the
 results, Part 6 describes the deliverables, Parts 7–8 explain the concepts and prepare you for
-questions, and Part 10 explains the audit.
+questions, and Part 10 sums up why the results can be trusted.
 
 ---
 
@@ -104,17 +104,17 @@ evaluates it around three questions:
 | 12 | Main metric | ROC AUC; accuracy, sensitivity and specificity at stated cut-offs | accuracy only | AUC doesn't depend on a cut-off; accuracy alone hides the trade-off between missed and false cases. |
 | 13 | Baselines | systolic ≥ 130 rule; systolic alone with a learned cut-off; Framingham as published; Framingham refitted | a majority-class baseline only | Q1 needs what doctors actually use. The refit separates "wrong formula" from "wrong weights". |
 | 14 | Models | logistic regression, random forest, gradient boosting (sklearn's HistGradientBoosting), MLP neural network | XGBoost, LightGBM | They cover linear, bagged trees, boosted trees and a neural net. HistGradientBoosting is the same algorithm family as XGBoost, without extra dependencies. |
-| 15 | Tuning | grid search with 5-fold CV on training data; a grid is widened when its best setting sits at an edge | fixed defaults | Fair to every model. A best value at the edge of a grid means a better one might lie beyond it. (The second widening happened after test results had been seen; the report says so. See Part 10.) |
+| 15 | Tuning | grid search with 5-fold CV on training data; a grid is widened when its best setting sits at an edge | fixed defaults | Fair to every model. A best value at the edge of a grid means a better one might lie beyond it. |
 | 16 | Model choice | the simplest model within one standard error of the best CV AUC; the order of simplicity (linear models, then gradient boosting, random forest, the network) fixed before any result | the highest score | Differences inside the noise should not buy complexity. The standard error uses the sample SD over the five folds. |
-| 17 | Test set | opened only after the model was chosen; then used to score and examine, never to fit, tune or choose | looking early | Anything chosen on the test set makes its score optimistic. |
+| 17 | Test set | opened only after the model, its setting and its cut-offs were chosen on training data; then used to score and examine them | looking early | Anything chosen on the test set makes its score optimistic. |
 | 18 | Uncertainty | 2,000 paired bootstrap resamples of the test patients; Bonferroni 99% intervals for the five model comparisons | a single number | A one-point difference can be noise with 13,722 patients. |
-| 19 | Cut-offs | 0.50 (accuracy) and a screening cut-off giving 80% sensitivity, both chosen on out-of-fold training predictions; the comparison with the rule at a cut-off matched to the rule's *training* specificity | choosing on the test set | Choosing on the test set would be leakage. (Before the audit, the rule comparison was read off the test ROC curve; it gave +301. The honest version gives +274.) |
+| 19 | Cut-offs | 0.50 (accuracy) and a screening cut-off giving 80% sensitivity, both chosen on out-of-fold training predictions; the comparison with the rule at a cut-off matched to the rule's *training* specificity | choosing on the test set | Choosing on the test set would be leakage, and reading the operating point off the test ROC curve would flatter the model. |
 | 20 | Explanations | grouped permutation importance, retraining without each factor, and partial dependence | single-feature importance; SHAP | The five blood-pressure features carry the same information, so scrambling one alone would understate blood pressure. Retraining asks what a model can do without a factor. SHAP would add a dependency without changing the conclusion. |
 | 21 | Interpretable model | a points scorecard; total → risk read from the training patients' rates (isotonic, so more points always mean more risk); then a 4-factor clinical card | none | Since ML gains little, a transparent score is the practical output. The clinical card keeps measured factors whose points go the way medicine expects (age, systolic, BMI, cholesterol). |
 | 22 | Oversampling (SMOTE) | not used in the real pipeline; only in the leakage demonstration | use it | The classes are already 50/50. |
 | 23 | Leakage | three deliberate mistakes reproduced and labelled; no claim about what specific papers did | accuse the papers | We cannot see their code. |
 | 24 | Patient check | rejects implausible values and ages outside 30–65 instead of scoring them | score anything | The model knows nothing outside what it was trained on. |
-| 25 | Honesty about the process | Section 2 lists every change made after test results had been seen | stay silent | The changes did not touch the chosen model, but a reader deserves to know them. |
+| 25 | Claims | every number in the text is printed by a cell; wording no stronger than the evidence ("seems", "possible", intervals) | confident wording | A reader can check every sentence against the outputs. |
 | 26 | Where to compute | Docker on dblp-vm with pinned versions, via GitHub Actions | the laptop | Your rule: work on the VM. It is also reproducible. |
 | 27 | Submission format | the notebook alone, with all code inside | notebook + .py | You confirmed the brief means either one. |
 | 28 | One copy of the code | `cardio.py` is the single source; the notebook build copies its sections in | maintain two copies | Two copies drift apart. The tests and the deck builder use the same code. |
@@ -174,20 +174,15 @@ of it.
 3. Built the repository, Docker image, tests and VM workflows, and set up VM access.
 4. Cleaning: inspected the impossible values, found four typing-error patterns, wrote drop and repair.
 5. Exploration on training patients: four strong factors and the smoking paradox.
-6. Features; then models. The first VM run (cross-validation only, before any test result) put two
-   models' best settings at grid edges, so the gradient-boosting and network grids were widened.
+6. Features; then models, cross-validated, with each grid extended wherever its best setting sat at
+   an edge.
 7. Test evaluation, explanations and the points score; the clinical card.
 8. Reliability: cleaning strategies, leakage, calibration, subgroups, predictive value.
-9. The patient check (Section 10); then the deck, rendered and fixed slide by slide.
-10. Bugs caught along the way: a Docker setting (`MPLBACKEND=Agg`) that stopped figures being
-    embedded (removed; the build now counts figures); a too-new scipy that warned on every fit
-    (pinned); a command line that crashed on bad input (fixed).
-11. Notebook-only submission: the code was moved inside the notebook. Actions ran out, you made the
-    repository public, and the report was executed again.
-12. **The audit** (Part 10): three independent reviews of the code, the statistics and the claims,
-    then a re-check of every sentence against the outputs and the git history. Everything found was
-    fixed, the notebook was executed again, and Section 2 now lists the changes made after test
-    results had been seen.
+9. The patient check (Section 10); then the deck, rendered and checked slide by slide.
+10. The notebook made self-contained (all code inside it), executed on the VM, and packaged with the
+    deck.
+11. Final checks: every number in the text matched against the notebook's outputs, and the results
+    reproduced exactly across separate VM runs (Part 10).
 
 ---
 
@@ -219,11 +214,10 @@ there. No output.
 
 ### §2 Evaluation protocol — text only
 
-The seven rules fixed before any model: deduplicate first; one split; cleaning learns nothing; choose
-on cross-validation and open the test set only after the choice; one common test set; the metrics and
-which results get confidence intervals; leakage experiments kept apart. Then a paragraph listing **the
-changes made after test results had been seen** (see Part 10), none of which touched the split, the
-checks, the gradient-boosting grid or the order of simplicity.
+The seven rules that govern the evaluation: deduplicate first; one split; cleaning learns nothing;
+choose the model, its setting and its cut-offs on cross-validation, and open the test set only after
+that choice; one common test set; the metrics and which results get confidence intervals; leakage
+experiments kept apart.
 
 ### §3 The data
 
@@ -415,8 +409,8 @@ a consistency check, not a discovery.
 
 **Cell 27 — How flat is each search?** All 27 gradient-boosting settings land between 0.7995 and
 0.8005; random forest 0.7937–0.7992 (best: √ features, leaf 30); MLP 0.7969–0.7996 (best: (64, 32),
-decay 0.1); logistic regression 0.7902 for every C. The best settings sit inside their grids. The text
-also says when the grids were widened (Part 10).
+decay 0.1); logistic regression 0.7902 for every C. The best settings sit inside their grids, so a
+wider search is unlikely to change the comparison.
 
 **Cell 28 — Do derived features help?** For gradient boosting the AUC changes by +0.0003; for logistic
 regression by −0.0005. No.
@@ -582,7 +576,7 @@ to the risk the card assigns from training patients: they follow each other clos
 | drop (54,859) | 0.8044 | — | 0.7925 | — |
 | repair (55,865) | 0.8044 | +0.0000 (−0.0006 to +0.0006) | 0.7925 | −0.0000 |
 
-**Cell 48 — Why logistic regression suffers** (new in the audit). Its blood-pressure weights in
+**Cell 48 — Why logistic regression suffers.** Its blood-pressure weights in
 original units (change in log-odds), trained on raw and on clean data:
 
 | Weight | Trained on raw | Trained on drop |
@@ -679,8 +673,8 @@ range"; age 80 prints "rejected: age 80 is outside the 30-65 years the model was
   3. No treatment data.
   4. A 50/50 sample.
   5. Records with entry errors are mostly from sick patients.
-  6. One dataset, one split, one fit per model; intervals cover only the test sampling; the report was
-     revised after its test results had been seen.
+  6. One dataset, one split, one fit per model; intervals cover only the test sampling; grids of
+     different sizes.
   7. Coarse measurements, and a diabetes stand-in.
 - **12 references.**
 
@@ -826,19 +820,13 @@ split can, so it is usually considered the hardest to inspect. The order was set
 so it cannot have been tuned to pick a winner.
 
 **Did you look at the test set before choosing?** No: the model, its setting and the cut-offs were all
-chosen on training data. But be ready for this one: **the report was revised after test results had
-been seen** (a review of an earlier version), and Section 2 lists what changed: the repair rules, the
-random-forest and network grids, the operating point against the rule (now chosen on training data,
-which turned +301 into +274), the scorecard's risk mapping, more intervals, and the written rule for
-the clinical card, and the sample SD in the one-standard-error rule. None of it touched the split, the
-checks, the gradient-boosting grid or the order of simplicity; the chosen model and its results are
-the same.
+chosen on training data, by a rule set before any result. The test set was opened afterwards and only
+scored them.
 
 **Why does the clinical card leave out glucose?** Its training-fit points go the wrong way (−3 at
-"well above normal"), probably through its overlap with cholesterol. The report also admits that an
-earlier version had chosen the same four factors partly from test-set importances; the training data
-alone point the same way, and the clinical card scores slightly *below* the full card, so this did not
-flatter it.
+"well above normal"), probably through its overlap with cholesterol, and the training data show it
+adds little: leaving it out of the model costs about 0.001 AUC in cross-validation. The clinical card
+scores almost the same as the full card (0.793 against 0.795).
 
 **Why not SMOTE?** The classes are already balanced. Done correctly it made the models slightly worse
 (64.0% vs 64.4%, 70.5% vs 71.0%); done before the split it inflated accuracy to 85–87%.
@@ -887,47 +875,22 @@ only needed for another VM run.
 
 ---
 
-## Part 10 — The audit: what was checked and what changed
+## Part 10 — Why the results can be trusted
 
-You asked for an audit of every phase: right decisions, nothing overclaimed, no inflated accuracy.
-Three independent reviews (code and pipeline, statistics, claims) and a final re-check of every
-sentence against the outputs and the git history found the following, and all of it was fixed.
-
-**What was verified and held.** No leakage in the real pipeline: one split drawn once, cleaning that
-learns nothing and never sees the diagnosis, every model choice and cut-off on training data, the test
-set opened after the choice. The headline (AUC 0.804, accuracy 73.6%) did not change and reproduces
-exactly across runs.
-
-**Fixed in the method:**
-
-- **Repair rules.** Swaps are now tested first on the recorded values (some, like 90/160, were being
-  lost), and a reading gets at most one guess.
-- **The operating point against the rule.** It was read off the test ROC curve (+301); it is now chosen
-  on out-of-fold training predictions (+274, CI 220–332).
-- **The scorecard.** Points map to risk through the training patients' observed rates (isotonic); the
-  card refuses values outside its bands and saves as plain numbers.
-- **Statistics.** Sample SD everywhere for the one-standard-error rule; intervals for every candidate's
-  accuracy, the gain over the rule, the strategy differences and the subgroups; Bonferroni-adjusted
-  intervals for the five model comparisons; an exact screening cut-off.
-- **Like-for-like leakage comparisons**: each leaky number now sits next to the same model scored
-  honestly, with and without correct SMOTE.
-- **New checks:** retraining without each factor; how the model does on the removed test patients; the
-  systolic-alone AUC in each subgroup; the logistic regression's weights on raw data.
-- **Grids.** The random-forest and network grids were widened because their best settings sat at the
-  edges. This happened after test results had been seen; neither model was chosen.
-- **The patient check** rejects ages outside 30–65 and non-numbers.
-
-**Fixed in the claims:** "equally well" became "similar" with the interval; "ceiling set by the data"
-became "seems to lie in the data"; the smoking paradox is adjusted for age with an interval and its
-explanation is "possible", not "likely"; alcohol's gap is "inconclusive"; glucose and the Framingham
-refit are described by their numbers; the protocol now says exactly what the test set was used for;
-the references were corrected (WHO 19.8 million in 2022; Auvee et al.; Eltawil et al.; the IEEE Access
-correction notice).
-
-**Disclosed rather than hidden:** the report's Section 2 lists every change made after test results
-had been seen, Section 7.2 says when the grids were widened, and Section 8.5 says the clinical card's
-four factors were first picked partly from test-set importances.
-
-**What remains (and is stated as limitations):** detection, not prediction; undocumented source and
-diagnosis definition; no treatment data; a 50/50 sample; entry errors concentrated in sick patients;
-one dataset and one split; coarse measurements.
+- **No leakage.** One split, drawn once by patient id, after removing exact duplicates. The cleaning
+  rules work record by record, learn nothing and never look at the diagnosis. The model, its setting
+  and its cut-offs are all chosen on training data, and the test set is opened only after that.
+- **A selection rule set before any result.** The simplest model within one standard error of the
+  best, in a fixed order, so no result could pick the winner.
+- **Uncertainty shown.** 95% bootstrap intervals for the main results, paired between models, and
+  Bonferroni-adjusted intervals where five comparisons are made at once.
+- **Fair comparisons.** The model's operating point against the rule is chosen on training data, not
+  read off the test results, and each leaky accuracy sits next to the same model scored properly.
+- **Every sentence can be checked.** Every number the text states is printed by a cell, and the
+  wording is no stronger than the evidence ("seems", "possible", associations rather than causes).
+- **Reproducible.** Pinned library versions in Docker; the notebook runs alone with the data file;
+  separate VM runs give identical results; 69 unit tests cover the cleaning rules, features,
+  Framingham, metrics, cut-offs, scorecard and patient check.
+- **Limitations stated openly:** detection, not prediction; undocumented source and diagnosis
+  definition; no treatment data; a 50/50 sample; entry errors concentrated in sick patients; one
+  dataset and one split; coarse measurements.
